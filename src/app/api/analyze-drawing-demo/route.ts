@@ -1,23 +1,31 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import ZAI from "z-ai-web-dev-sdk";
+import { readFile } from "fs/promises";
+import path from "path";
 
-export async function POST(request: NextRequest) {
+export async function GET() {
   try {
-    const formData = await request.formData();
-    const imageFile = formData.get("drawing") as File | null;
+    // Read the child's drawing from upload folder
+    const uploadDir = "/home/z/my-project/upload";
+    const { readdir } = await import("fs/promises");
+    const files = await readdir(uploadDir);
+    const imageFile = files.find(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
 
     if (!imageFile) {
-      return NextResponse.json({ error: "No se proporcionó imagen" }, { status: 400 });
+      return NextResponse.json({ error: "No hay dibujo disponible" }, { status: 404 });
     }
 
-    const bytes = await imageFile.arrayBuffer();
-    const base64 = Buffer.from(bytes).toString("base64");
-    const mimeType = imageFile.type || "image/jpeg";
+    const filePath = path.join(uploadDir, imageFile);
+    const buffer = await readFile(filePath);
+    const base64 = buffer.toString("base64");
+    const ext = imageFile.toLowerCase();
+    let mimeType = "image/jpeg";
+    if (ext.endsWith(".png")) mimeType = "image/png";
+    else if (ext.endsWith(".webp")) mimeType = "image/webp";
     const dataUrl = `data:${mimeType};base64,${base64}`;
 
+    // Analyze with VLM using createVision
     const zai = await ZAI.create();
-
-    // Use createVision (not create) for image analysis
     const completion = await zai.chat.completions.createVision({
       messages: [
         {
@@ -57,11 +65,9 @@ Elige stats y poderes acordes a lo que dibujó el niño. Sé creativo con el nom
     });
 
     const content = completion.choices[0]?.message?.content || "";
-
-    // Extract JSON from response
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return NextResponse.json({ error: "No se pudo analizar el dibujo", raw: content }, { status: 500 });
+      return NextResponse.json({ error: "No se pudo analizar", raw: content }, { status: 500 });
     }
 
     const analysis = JSON.parse(jsonMatch[0]);
@@ -71,9 +77,8 @@ Elige stats y poderes acordes a lo que dibujó el niño. Sé creativo con el nom
       analysis,
       imageData: dataUrl,
     });
-
   } catch (error) {
-    console.error("Error analyzing drawing:", error);
+    console.error("Error in demo analysis:", error);
     return NextResponse.json({ error: "Error al analizar el dibujo" }, { status: 500 });
   }
 }

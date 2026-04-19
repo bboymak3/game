@@ -826,6 +826,95 @@ export default function GameEngine() {
   }, [phase]);
 
   // ============================================
+  // DEMO FALLBACK - Default character if VLM fails
+  // ============================================
+  const startDemoFallback = useCallback(() => {
+    const drawingUrl = '/api/demo-drawing';
+    setHeroImage(drawingUrl);
+    setCharacterInfo({
+      characterName: 'Blob Warrior',
+      characterType: 'guerrero',
+      description: 'Un valiente dibujo blob que cobra vida',
+      power: 'Choque Cosmico',
+      color1: '#00E5FF',
+      color2: '#00BCD4',
+      stats: { attack: 12, defense: 6, speed: 7, hp: 120 },
+      element: 'luz',
+    });
+    setDHeroName('Blob Warrior');
+
+    const img = new Image();
+    img.onload = () => {
+      heroRef.current.image = img;
+      heroRef.current.imageWidth = img.width;
+      heroRef.current.imageHeight = img.height;
+    };
+    img.src = drawingUrl;
+
+    const h = heroRef.current;
+    h.attack = 12; h.defense = 6; h.speed = 5.6;
+    h.hp = 120; h.maxHp = 120;
+    h.power = 'Choque Cosmico'; h.element = 'luz';
+    h.characterName = 'Blob Warrior'; h.characterType = 'guerrero';
+
+    setPhase('awakening');
+    awakeningProgressRef.current = 0;
+  }, []);
+
+  // ============================================
+  // DEMO MODE - Load child's drawing and analyze with VLM
+  // ============================================
+  const startDemoMode = useCallback(() => {
+    // Use the uploaded child's drawing from the upload folder
+    setPhase('analyzing');
+    setAnalyzing(true);
+
+    // Load the child's drawing that was uploaded
+    const drawingUrl = '/api/demo-drawing';
+    setHeroImage(drawingUrl);
+
+    // Send to VLM API
+    fetch('/api/analyze-drawing-demo')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.analysis) {
+          setCharacterInfo(data.analysis);
+          setDHeroName(data.analysis.characterName || 'Guerrero Dibujo');
+
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            heroRef.current.image = img;
+            heroRef.current.imageWidth = img.width;
+            heroRef.current.imageHeight = img.height;
+          };
+          img.src = drawingUrl;
+
+          const h = heroRef.current;
+          h.attack = data.analysis.stats?.attack || 10;
+          h.defense = data.analysis.stats?.defense || 5;
+          h.speed = (data.analysis.stats?.speed || 3) * 0.8;
+          h.hp = data.analysis.stats?.hp || 100;
+          h.maxHp = data.analysis.stats?.hp || 100;
+          h.power = data.analysis.power || 'Golpe';
+          h.element = data.analysis.element || 'naturaleza';
+          h.characterName = data.analysis.characterName || 'Guerrero Dibujo';
+          h.characterType = data.analysis.characterType || 'guerrero';
+
+          setPhase('awakening');
+          awakeningProgressRef.current = 0;
+        } else {
+          // Fallback with default character
+          startDemoFallback();
+        }
+      })
+      .catch(() => {
+        startDemoFallback();
+      })
+      .finally(() => setAnalyzing(false));
+  }, []);
+
+  // ============================================
   // START / RESTART
   // ============================================
   const startBattle = useCallback(() => {
@@ -1083,6 +1172,12 @@ export default function GameEngine() {
             <button onClick={goToScan}
               className="bg-gradient-to-b from-yellow-400 to-orange-500 text-black font-black text-xl px-10 py-4 rounded-xl shadow-lg active:scale-95 transition-transform pointer-events-auto">
               ESCANEAR DIBUJO
+            </button>
+
+            {/* Demo mode - uses child's uploaded drawing directly */}
+            <button onClick={startDemoMode}
+              className="block w-full mt-3 bg-gradient-to-b from-purple-500 to-pink-600 text-white font-bold text-base px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto">
+              MODO DEMO (Dibujo del Nino)
             </button>
 
             {heroImage && (
