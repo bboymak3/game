@@ -1,600 +1,107 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { Dragon, DragonType, Hero, DamageNumber, Particle, FloatingText, SkillEffect, GameState, GameConfig } from './types';
-import { drawHero, drawDragon, drawHealthBar, drawDamageNumber, drawParticle, drawStars as drawBgStars } from './PixelSprites';
+import type { Monster, MonsterType, DrawingHero, DamageNumber, Particle, FloatingText, SkillEffect, GamePhase, WaveConfig, CharacterAnalysis } from './types';
+import { drawSlime, drawGhost, drawBat, drawSkeleton, drawBoss, drawDrawingHero, drawAwakeningEffect, drawHealthBar } from './PixelSprites';
 
 // ============================================
 // CONSTANTS
 // ============================================
-const HERO_SCALE = 2.2;
-const DRAGON_SCALE = 1.8;
-const DRAGON_TYPES: DragonType[] = ['green', 'red', 'blue', 'gold', 'shadow'];
-const DRAGON_STATS = {
-  green: { hp: 60, speed: 0.8, damage: 8 },
-  red: { hp: 100, speed: 1.0, damage: 12 },
-  blue: { hp: 80, speed: 1.3, damage: 10 },
-  gold: { hp: 150, speed: 0.6, damage: 18 },
-  shadow: { hp: 200, speed: 1.1, damage: 15 },
+const MONSTER_STATS: Record<MonsterType, { hp: number; speed: number; damage: number; size: number }> = {
+  slime: { hp: 40, speed: 0.6, damage: 5, size: 1.5 },
+  ghost: { hp: 35, speed: 0.9, damage: 7, size: 1.4 },
+  bat: { hp: 30, speed: 1.2, damage: 6, size: 1.2 },
+  skeleton: { hp: 55, speed: 0.7, damage: 9, size: 1.6 },
+  boss: { hp: 200, speed: 0.5, damage: 15, size: 2.2 },
 };
 
-const DRAGON_NAMES: Record<DragonType, string> = {
-  green: 'Dragón Bosque',
-  red: 'Dragón Fuego',
-  blue: 'Dragón Hielo',
-  gold: 'Dragón Dorado',
-  shadow: 'Dragón Sombra',
+const MONSTER_NAMES: Record<MonsterType, string> = {
+  slime: 'Slime Verde',
+  ghost: 'Fantasmita',
+  bat: 'Murcielago',
+  skeleton: 'Esqueletito',
+  boss: 'JEFE FINAL',
 };
 
-function createHero(): Hero {
+const MONSTER_DRAW: Record<MonsterType, typeof drawSlime> = {
+  slime: drawSlime,
+  ghost: drawGhost,
+  bat: drawBat,
+  skeleton: drawSkeleton,
+  boss: drawBoss,
+};
+
+const MONSTER_COLORS: Record<MonsterType, [string, string][]> = {
+  slime: [['#4CAF50', '#81C784'], ['#2196F3', '#64B5F6'], ['#FF9800', '#FFB74D']],
+  ghost: [['#E1BEE7', '#CE93D8']],
+  bat: [['#7B1FA2', '#9C27B0']],
+  skeleton: [['#F5F5DC', '#D7CCC8']],
+  boss: [['#C62828', '#FFCDD2']],
+};
+
+function createDrawingHero(analysis: CharacterAnalysis | null, image: HTMLImageElement | null): DrawingHero {
   return {
-    x: 0, y: 0,
-    hp: 100, maxHp: 100,
+    x: 0, y: 0, targetX: 0, targetY: 0,
+    hp: analysis?.stats.hp || 100,
+    maxHp: analysis?.stats.hp || 100,
     mana: 50, maxMana: 50,
-    frame: 0, frameTimer: 0,
-    attacking: false, attackTimer: 0, attackFrame: 0,
+    frame: 0, attacking: false, attackTimer: 0, hitTimer: 0,
     direction: 1,
-    hitTimer: 0,
-    combo: 0, exp: 0, level: 1,
+    image, imageWidth: image?.width || 100, imageHeight: image?.height || 100,
+    attack: analysis?.stats.attack || 10,
+    defense: analysis?.stats.defense || 5,
+    speed: (analysis?.stats.speed || 3) * 0.8,
+    element: analysis?.element || 'naturaleza',
+    power: analysis?.power || 'Golpe Sorpresa',
+    characterName: analysis?.characterName || 'Dibujo',
+    characterType: analysis?.characterType || 'guerrero',
+    level: 1, exp: 0, combo: 0,
     skillActive: false, skillTimer: 0,
+    glowIntensity: 1, scale: 1, bobOffset: 0,
   };
 }
 
 export default function GameEngine() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const gameLoopRef = useRef<number>(0);
-  const heroRef = useRef<Hero>(createHero());
-  const dragonsRef = useRef<Dragon[]>([]);
+  const heroRef = useRef<DrawingHero>(createDrawingHero(null, null));
+  const monstersRef = useRef<Monster[]>([]);
   const damageNumbersRef = useRef<DamageNumber[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const floatingTextsRef = useRef<FloatingText[]>([]);
   const skillEffectsRef = useRef<SkillEffect[]>([]);
-  const configRef = useRef<GameConfig>({ wave: 1, dragonsPerWave: 3, score: 0, highScore: 0, totalKills: 0 });
+  const waveRef = useRef<WaveConfig>({ wave: 1, monstersPerWave: 3, score: 0, highScore: 0, totalKills: 0, monsterTypes: ['slime'] });
   const frameRef = useRef(0);
   const cameraReadyRef = useRef(false);
   const spawnTimerRef = useRef(0);
-  const dragonIdCounterRef = useRef(0);
-  const effectIdCounterRef = useRef(0);
+  const monsterIdRef = useRef(0);
+  const effectIdRef = useRef(0);
+  const awakeningProgressRef = useRef(0);
 
-  // React state for UI rendering
-  const [gameState, setGameState] = useState<GameState>('menu');
+  const [phase, setPhase] = useState<GamePhase>('menu');
   const [cameraReady, setCameraReady] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [displayScore, setDisplayScore] = useState(0);
-  const [displayWave, setDisplayWave] = useState(1);
-  const [displayHp, setDisplayHp] = useState(100);
-  const [displayMaxHp, setDisplayMaxHp] = useState(100);
-  const [displayMana, setDisplayMana] = useState(50);
-  const [displayMaxMana, setDisplayMaxMana] = useState(50);
-  const [displayLevel, setDisplayLevel] = useState(1);
-  const [displayExp, setDisplayExp] = useState(0);
-  const [displayCombo, setDisplayCombo] = useState(0);
-  const [displayKills, setDisplayKills] = useState(0);
-  const [displayHighScore, setDisplayHighScore] = useState(0);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [characterInfo, setCharacterInfo] = useState<CharacterAnalysis | null>(null);
+  const [heroImage, setHeroImage] = useState<string | null>(null);
+
+  // Display state (synced from refs)
+  const [dScore, setDScore] = useState(0);
+  const [dWave, setDWave] = useState(1);
+  const [dHp, setDHp] = useState(100);
+  const [dMaxHp, setDMaxHp] = useState(100);
+  const [dMana, setDMana] = useState(50);
+  const [dMaxMana, setDMaxMana] = useState(50);
+  const [dLevel, setDLevel] = useState(1);
+  const [dExp, setDExp] = useState(0);
+  const [dCombo, setDCombo] = useState(0);
+  const [dKills, setDKills] = useState(0);
+  const [dHighScore, setDHighScore] = useState(0);
+  const [dHeroName, setDHeroName] = useState('Dibujo');
 
   // ============================================
-  // SPAWN DRAGON
-  // ============================================
-  function spawnDragon(canvas: HTMLCanvasElement): Dragon {
-    const wave = configRef.current.wave;
-    const typeIndex = Math.min(Math.floor(Math.random() * Math.min(wave, DRAGON_TYPES.length)), DRAGON_TYPES.length - 1);
-    const type = DRAGON_TYPES[typeIndex];
-    const stats = DRAGON_STATS[type];
-    const hpMultiplier = 1 + (wave - 1) * 0.3;
-
-    const side = Math.random() > 0.5 ? 1 : -1;
-    return {
-      id: dragonIdCounterRef.current++,
-      x: side === 1 ? canvas.width + 60 : -60,
-      y: canvas.height * 0.3 + Math.random() * (canvas.height * 0.4),
-      hp: Math.floor(stats.hp * hpMultiplier),
-      maxHp: Math.floor(stats.hp * hpMultiplier),
-      type,
-      frame: Math.random() * 100,
-      frameTimer: 0,
-      direction: side === 1 ? -1 : 1,
-      speed: stats.speed * (0.8 + Math.random() * 0.4),
-      hitTimer: 0,
-      attackTimer: 0,
-      alive: true,
-      deathTimer: 0,
-    };
-  }
-
-  // ============================================
-  // COMBAT LOGIC
-  // ============================================
-  function attackDragon(dragon: Dragon, isSkill: boolean) {
-    const hero = heroRef.current;
-    const baseDamage = 10 + hero.level * 3;
-    const comboMultiplier = 1 + hero.combo * 0.1;
-    const skillMultiplier = isSkill ? 3 : 1;
-    const isCrit = Math.random() < 0.15 + hero.level * 0.02;
-    const critMultiplier = isCrit ? 2 : 1;
-    const damage = Math.floor(baseDamage * comboMultiplier * skillMultiplier * critMultiplier * (0.8 + Math.random() * 0.4));
-
-    dragon.hp -= damage;
-    dragon.hitTimer = 10;
-    hero.combo = Math.min(hero.combo + 1, 10);
-
-    // Damage number
-    damageNumbersRef.current.push({
-      id: effectIdCounterRef.current++,
-      value: damage,
-      x: dragon.x + (Math.random() - 0.5) * 30,
-      y: dragon.y - 40,
-      color: isCrit ? '#FFD700' : '#ffffff',
-      life: 40,
-      vy: -2,
-    });
-
-    // Particles
-    for (let i = 0; i < (isCrit ? 15 : 5); i++) {
-      particlesRef.current.push({
-        x: dragon.x + (Math.random() - 0.5) * 40,
-        y: dragon.y + (Math.random() - 0.5) * 40,
-        vx: (Math.random() - 0.5) * 6,
-        vy: (Math.random() - 0.5) * 6 - 2,
-        life: 20 + Math.random() * 15,
-        maxLife: 35,
-        color: isCrit ? '#FFD700' : isSkill ? '#00d4ff' : '#f39c12',
-        size: 3 + Math.random() * 5,
-      });
-    }
-
-    if (dragon.hp <= 0) {
-      dragon.alive = false;
-      dragon.deathTimer = 30;
-      const expGain = 20 + dragon.maxHp * 0.2;
-      hero.exp += expGain;
-      configRef.current.score += Math.floor(dragon.maxHp * 1.5);
-      configRef.current.totalKills++;
-
-      // Floating text
-      floatingTextsRef.current.push({
-        id: effectIdCounterRef.current++,
-        text: `+${Math.floor(dragon.maxHp * 1.5)} pts`,
-        x: dragon.x,
-        y: dragon.y - 60,
-        color: '#FFD700',
-        life: 50,
-        size: 16,
-      });
-
-      // Level up check
-      const expNeeded = hero.level * 80;
-      if (hero.exp >= expNeeded) {
-        hero.level++;
-        hero.exp -= expNeeded;
-        hero.maxHp += 15;
-        hero.hp = Math.min(hero.hp + 30, hero.maxHp);
-        hero.maxMana += 5;
-        hero.mana = Math.min(hero.mana + 15, hero.maxMana);
-        floatingTextsRef.current.push({
-          id: effectIdCounterRef.current++,
-          text: `¡NIVEL ${hero.level}!`,
-          x: hero.x,
-          y: hero.y - 80,
-          color: '#00ff88',
-          life: 80,
-          size: 24,
-        });
-      }
-
-      // Death explosion particles
-      for (let i = 0; i < 25; i++) {
-        particlesRef.current.push({
-          x: dragon.x,
-          y: dragon.y,
-          vx: (Math.random() - 0.5) * 10,
-          vy: (Math.random() - 0.5) * 10,
-          life: 30 + Math.random() * 20,
-          maxLife: 50,
-          color: dragon.type === 'gold' ? '#FFD700' : dragon.type === 'shadow' ? '#9b59b6' : '#2ecc71',
-          size: 4 + Math.random() * 6,
-        });
-      }
-    }
-  }
-
-  // ============================================
-  // HERO TAP / ATTACK
-  // ============================================
-  const handleCanvasTap = useCallback((e: React.TouchEvent | React.MouseEvent) => {
-    if (gameState !== 'playing') return;
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    let clientX: number, clientY: number;
-    if ('touches' in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-    }
-
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const tapX = (clientX - rect.left) * scaleX;
-    const tapY = (clientY - rect.top) * scaleY;
-
-    const hero = heroRef.current;
-    hero.attacking = true;
-    hero.attackTimer = 15;
-    hero.attackFrame = 0;
-
-    // Check if tapped on a dragon
-    let hitDragon: Dragon | null = null;
-    let closestDist = Infinity;
-
-    dragonsRef.current.forEach(dragon => {
-      if (!dragon.alive) return;
-      const dist = Math.sqrt((tapX - dragon.x) ** 2 + (tapY - dragon.y) ** 2);
-      if (dist < 80 * DRAGON_SCALE && dist < closestDist) {
-        closestDist = dist;
-        hitDragon = dragon;
-      }
-    });
-
-    if (hitDragon) {
-      attackDragon(hitDragon, false);
-      hero.direction = hitDragon.x > hero.x ? 1 : -1;
-    } else {
-      hero.combo = 0; // Reset combo on miss
-    }
-  }, [gameState]);
-
-  // ============================================
-  // SKILL (MANA SPECIAL)
-  // ============================================
-  const useSkill = useCallback(() => {
-    if (gameState !== 'playing') return;
-    const hero = heroRef.current;
-    if (hero.mana < 20) return;
-
-    hero.mana -= 20;
-    hero.skillActive = true;
-    hero.skillTimer = 20;
-
-    // Skill effect
-    skillEffectsRef.current.push({
-      x: hero.x,
-      y: hero.y,
-      radius: 0,
-      maxRadius: 200,
-      life: 20,
-      color: '#00d4ff',
-    });
-
-    // Hit all dragons in range
-    dragonsRef.current.forEach(dragon => {
-      if (!dragon.alive) return;
-      const dist = Math.sqrt((dragon.x - hero.x) ** 2 + (dragon.y - hero.y) ** 2);
-      if (dist < 200) {
-        attackDragon(dragon, true);
-      }
-    });
-  }, [gameState]);
-
-  // ============================================
-  // MAIN GAME LOOP
-  // ============================================
-  function gameLoop(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
-    frameRef.current++;
-    const frame = frameRef.current;
-    const hero = heroRef.current;
-
-    const W = canvas.width;
-    const H = canvas.height;
-
-    // Position hero at bottom center
-    hero.x = W / 2;
-    hero.y = H * 0.78;
-
-    // Update hero animation
-    hero.frame++;
-    if (hero.hitTimer > 0) hero.hitTimer--;
-    if (hero.attackTimer > 0) {
-      hero.attackTimer--;
-      hero.attackFrame++;
-      if (hero.attackTimer <= 0) {
-        hero.attacking = false;
-        hero.attackFrame = 0;
-      }
-    }
-    if (hero.skillTimer > 0) hero.skillTimer--;
-    else hero.skillActive = false;
-
-    // Mana regeneration
-    if (frame % 60 === 0) {
-      hero.mana = Math.min(hero.mana + 2, hero.maxMana);
-    }
-
-    // Spawn dragons
-    const aliveDragons = dragonsRef.current.filter(d => d.alive);
-    if (aliveDragons.length < Math.min(configRef.current.dragonsPerWave, 3 + configRef.current.wave)) {
-      spawnTimerRef.current++;
-      if (spawnTimerRef.current > 90) {
-        dragonsRef.current.push(spawnDragon(canvas));
-        spawnTimerRef.current = 0;
-      }
-    }
-
-    // Check wave completion
-    if (aliveDragons.length === 0 && dragonsRef.current.length > 0) {
-      const deadAll = dragonsRef.current.every(d => !d.alive);
-      if (deadAll && dragonsRef.current.length >= configRef.current.dragonsPerWave) {
-        configRef.current.wave++;
-        configRef.current.dragonsPerWave = Math.min(3 + configRef.current.wave, 8);
-        dragonsRef.current = [];
-        spawnTimerRef.current = 0;
-        floatingTextsRef.current.push({
-          id: effectIdCounterRef.current++,
-          text: `¡OLEADA ${configRef.current.wave}!`,
-          x: W / 2,
-          y: H / 3,
-          color: '#00ff88',
-          life: 90,
-          size: 28,
-        });
-        // Small heal between waves
-        hero.hp = Math.min(hero.hp + Math.floor(hero.maxHp * 0.2), hero.maxHp);
-      }
-    }
-
-    // Update dragons
-    dragonsRef.current.forEach(dragon => {
-      if (!dragon.alive) {
-        dragon.deathTimer--;
-        return;
-      }
-
-      dragon.frame++;
-      if (dragon.hitTimer > 0) dragon.hitTimer--;
-
-      // Move towards hero
-      const dx = hero.x - dragon.x;
-      const dy = hero.y - dragon.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist > 60 * DRAGON_SCALE) {
-        dragon.x += (dx / dist) * dragon.speed;
-        dragon.y += (dy / dist) * dragon.speed * 0.5;
-        dragon.direction = dx > 0 ? 1 : -1;
-      }
-
-      // Dragon attack
-      if (dist < 70 * DRAGON_SCALE) {
-        dragon.attackTimer++;
-        if (dragon.attackTimer > 60) {
-          dragon.attackTimer = 0;
-          const damage = DRAGON_STATS[dragon.type].damage;
-          hero.hp -= damage;
-          hero.hitTimer = 10;
-
-          // Floating text for damage taken
-          floatingTextsRef.current.push({
-            id: effectIdCounterRef.current++,
-            text: `-${damage}`,
-            x: hero.x + (Math.random() - 0.5) * 20,
-            y: hero.y - 50,
-            color: '#ff4444',
-            life: 40,
-            size: 20,
-          });
-        }
-      }
-
-      // Keep dragon in bounds
-      dragon.x = Math.max(30, Math.min(W - 30, dragon.x));
-      dragon.y = Math.max(30, Math.min(H - 50, dragon.y));
-    });
-
-    // Remove fully dead dragons
-    dragonsRef.current = dragonsRef.current.filter(d => d.alive || d.deathTimer > 0);
-
-    // Update effects
-    damageNumbersRef.current = damageNumbersRef.current.filter(d => {
-      d.life--;
-      d.y += d.vy;
-      d.vy -= 0.05;
-      return d.life > 0;
-    });
-
-    particlesRef.current = particlesRef.current.filter(p => {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.15;
-      p.life--;
-      return p.life > 0;
-    });
-
-    floatingTextsRef.current = floatingTextsRef.current.filter(t => {
-      t.life--;
-      t.y -= 0.5;
-      return t.life > 0;
-    });
-
-    skillEffectsRef.current = skillEffectsRef.current.filter(e => {
-      e.life--;
-      e.radius = e.maxRadius * (1 - e.life / 20);
-      return e.life > 0;
-    });
-
-    // Check game over
-    if (hero.hp <= 0) {
-      hero.hp = 0;
-      if (configRef.current.score > configRef.current.highScore) {
-        configRef.current.highScore = configRef.current.score;
-      }
-      setDisplayKills(configRef.current.totalKills);
-      setDisplayHighScore(configRef.current.highScore);
-      setGameState('gameover');
-    }
-
-    // Check victory
-    if (configRef.current.wave > 10) {
-      setDisplayKills(configRef.current.totalKills);
-      setDisplayHighScore(configRef.current.highScore);
-      setGameState('victory');
-    }
-
-    // ============================================
-    // RENDER
-    // ============================================
-    ctx.clearRect(0, 0, W, H);
-
-    // Background (if no camera)
-    if (!cameraReadyRef.current) {
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-      bgGrad.addColorStop(0, '#1a1a2e');
-      bgGrad.addColorStop(0.5, '#16213e');
-      bgGrad.addColorStop(1, '#0f3460');
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, W, H);
-
-      // Stars
-      drawBgStars(ctx, W, H, frame);
-
-      // Ground
-      ctx.fillStyle = '#2d5a27';
-      ctx.fillRect(0, H * 0.85, W, H * 0.15);
-      ctx.fillStyle = '#3a7a33';
-      ctx.fillRect(0, H * 0.85, W, 4);
-
-      // Pixel grass tufts
-      for (let i = 0; i < W; i += 20) {
-        const grassHeight = 4 + Math.sin(i * 0.1 + frame * 0.02) * 2;
-        ctx.fillStyle = '#4a9a43';
-        ctx.fillRect(i, H * 0.85 - grassHeight, 3, grassHeight);
-        ctx.fillRect(i + 6, H * 0.85 - grassHeight + 1, 2, grassHeight - 1);
-        ctx.fillRect(i + 12, H * 0.85 - grassHeight + 2, 2, grassHeight - 2);
-      }
-    }
-
-    // Skill effects
-    skillEffectsRef.current.forEach(e => {
-      ctx.save();
-      ctx.globalAlpha = e.life / 20 * 0.4;
-      ctx.strokeStyle = e.color;
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.globalAlpha = e.life / 20 * 0.15;
-      ctx.fillStyle = e.color;
-      ctx.beginPath();
-      ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    });
-
-    // Dragons
-    dragonsRef.current.forEach(dragon => {
-      drawDragon(ctx, dragon.x, dragon.y, DRAGON_SCALE, dragon.type, dragon.frame, dragon.direction, dragon.hitTimer, dragon.deathTimer);
-
-      // Health bar above dragon
-      if (dragon.alive) {
-        drawHealthBar(ctx, dragon.x - 40, dragon.y - 55, 80, 10, dragon.hp, dragon.maxHp, '#e74c3c');
-        // Name
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 11px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(DRAGON_NAMES[dragon.type], dragon.x, dragon.y - 60);
-      }
-    });
-
-    // Hero
-    drawHero(ctx, hero.x, hero.y, HERO_SCALE, hero.frame, hero.direction, hero.attacking, hero.attackFrame, hero.hitTimer, hero.level);
-
-    // Particles
-    particlesRef.current.forEach(p => {
-      drawParticle(ctx, p.x, p.y, p.size, p.color, p.life / p.maxLife);
-    });
-
-    // Damage numbers
-    damageNumbersRef.current.forEach(d => {
-      drawDamageNumber(ctx, d.x, d.y, d.value, d.color, d.life, d.value > 30);
-    });
-
-    // Floating texts
-    floatingTextsRef.current.forEach(t => {
-      ctx.save();
-      ctx.globalAlpha = Math.min(1, t.life / 15);
-      ctx.fillStyle = t.color;
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = 3;
-      ctx.font = `bold ${t.size}px monospace`;
-      ctx.textAlign = 'center';
-      ctx.strokeText(t.text, t.x, t.y);
-      ctx.fillText(t.text, t.x, t.y);
-      ctx.restore();
-    });
-
-    // HUD - Update React state periodically
-    if (frame % 5 === 0) {
-      setDisplayScore(configRef.current.score);
-      setDisplayWave(configRef.current.wave);
-      setDisplayHp(hero.hp);
-      setDisplayMaxHp(hero.maxHp);
-      setDisplayMana(hero.mana);
-      setDisplayMaxMana(hero.maxMana);
-      setDisplayLevel(hero.level);
-      setDisplayExp(hero.exp);
-      setDisplayCombo(hero.combo);
-      setDisplayKills(configRef.current.totalKills);
-      setDisplayHighScore(configRef.current.highScore);
-    }
-  }
-
-  // ============================================
-  // GAME START / RESTART
-  // ============================================
-  const startGame = useCallback(() => {
-    heroRef.current = createHero();
-    dragonsRef.current = [];
-    damageNumbersRef.current = [];
-    particlesRef.current = [];
-    floatingTextsRef.current = [];
-    skillEffectsRef.current = [];
-    configRef.current = { wave: 1, dragonsPerWave: 3, score: 0, highScore: configRef.current.highScore, totalKills: 0 };
-    frameRef.current = 0;
-    spawnTimerRef.current = 0;
-    setGameState('playing');
-  }, []);
-
-  // ============================================
-  // GAME LOOP EFFECT
-  // ============================================
-  useEffect(() => {
-    if (gameState !== 'playing') return;
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let running = true;
-    const loop = () => {
-      if (!running) return;
-      gameLoop(canvas, ctx);
-      gameLoopRef.current = requestAnimationFrame(loop);
-    };
-    gameLoopRef.current = requestAnimationFrame(loop);
-
-    return () => {
-      running = false;
-      cancelAnimationFrame(gameLoopRef.current);
-    };
-  }, [gameState]);
-
-  // ============================================
-  // CAMERA INIT ON MOUNT
+  // CAMERA SETUP
   // ============================================
   useEffect(() => {
     let cancelled = false;
@@ -602,7 +109,7 @@ export default function GameEngine() {
     async function setupCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
         if (cancelled) return;
@@ -614,10 +121,8 @@ export default function GameEngine() {
         }
       } catch (_err) {
         if (cancelled) return;
-        console.warn('Camera not available, using virtual background');
         cameraReadyRef.current = false;
         setCameraReady(false);
-        setCameraError('camera_unavailable');
       }
     }
 
@@ -633,318 +138,1015 @@ export default function GameEngine() {
   }, []);
 
   // ============================================
-  // KEYBOARD CONTROLS
+  // SCAN DRAWING
+  // ============================================
+  const scanDrawing = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = captureCanvasRef.current;
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Draw center crop (focus on the drawing)
+    const size = Math.min(canvas.width, canvas.height) * 0.6;
+    const sx = (canvas.width - size) / 2;
+    const sy = (canvas.height - size) / 2;
+    ctx.drawImage(video, sx, sy, size, size, 0, 0, size, size);
+
+    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+    setHeroImage(imageData);
+    setPhase('analyzing');
+    setAnalyzing(true);
+
+    // Send to VLM API
+    const formData = new FormData();
+    const blob = new Blob([ctx.getImageData(0, 0, size, size).data.buffer], { type: 'image/jpeg' });
+    formData.append('drawing', blob, 'drawing.jpg');
+
+    fetch('/api/analyze-drawing', {
+      method: 'POST',
+      body: formData,
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.analysis) {
+          setCharacterInfo(data.analysis);
+          setDHeroName(data.analysis.characterName || 'Dibujo');
+
+          // Load image as hero
+          const img = new Image();
+          img.onload = () => {
+            heroRef.current.image = img;
+            heroRef.current.imageWidth = img.width;
+            heroRef.current.imageHeight = img.height;
+          };
+          img.src = imageData;
+
+          // Set hero stats from VLM analysis
+          const h = heroRef.current;
+          h.attack = data.analysis.stats?.attack || 10;
+          h.defense = data.analysis.stats?.defense || 5;
+          h.speed = (data.analysis.stats?.speed || 3) * 0.8;
+          h.hp = data.analysis.stats?.hp || 100;
+          h.maxHp = data.analysis.stats?.hp || 100;
+          h.power = data.analysis.power || 'Golpe';
+          h.element = data.analysis.element || 'naturaleza';
+          h.characterName = data.analysis.characterName || 'Dibujo';
+          h.characterType = data.analysis.characterType || 'guerrero';
+
+          // Stop camera to save battery during battle
+          if (videoRef.current?.srcObject) {
+            const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+            tracks.forEach(t => t.stop());
+          }
+
+          // Start awakening animation
+          setPhase('awakening');
+          awakeningProgressRef.current = 0;
+        }
+      })
+      .catch(() => {
+        // Fallback: use image without analysis
+        const img = new Image();
+        img.onload = () => {
+          heroRef.current.image = img;
+          heroRef.current.imageWidth = img.width;
+          heroRef.current.imageHeight = img.height;
+        };
+        img.src = imageData;
+        setCharacterInfo({
+          characterName: 'Guerrero Dibujo',
+          characterType: 'guerrero',
+          description: 'Un valiente dibujo que cobra vida',
+          power: 'Golpe Magico',
+          color1: '#00E5FF',
+          color2: '#00BCD4',
+          stats: { attack: 10, defense: 5, speed: 5, hp: 100 },
+          element: 'luz',
+        });
+        setPhase('awakening');
+        awakeningProgressRef.current = 0;
+      })
+      .finally(() => setAnalyzing(false));
+  }, []);
+
+  // ============================================
+  // AWAKENING ANIMATION
   // ============================================
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === ' ' || e.key === 'e') {
-        // Trigger skill via hero ref directly to avoid stale closure
-        if (gameState !== 'playing') return;
-        const hero = heroRef.current;
-        if (hero.mana < 20) return;
-        hero.mana -= 20;
-        hero.skillActive = true;
-        hero.skillTimer = 20;
-        skillEffectsRef.current.push({
-          x: hero.x,
-          y: hero.y,
-          radius: 0,
-          maxRadius: 200,
-          life: 20,
-          color: '#00d4ff',
-        });
-        dragonsRef.current.forEach(dragon => {
-          if (!dragon.alive) return;
-          const dist = Math.sqrt((dragon.x - hero.x) ** 2 + (dragon.y - hero.y) ** 2);
-          if (dist < 200) {
-            attackDragon(dragon, true);
-          }
+    if (phase !== 'awakening') return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let running = true;
+    const loop = () => {
+      if (!running) return;
+      awakeningProgressRef.current += 0.008;
+
+      const W = canvas.width;
+      const H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      // Dark mystical background
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+      bgGrad.addColorStop(0, '#0d0d2b');
+      bgGrad.addColorStop(0.5, '#1a1a3e');
+      bgGrad.addColorStop(1, '#0d0d2b');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, W, H);
+
+      // Stars
+      for (let i = 0; i < 50; i++) {
+        const sx = (i * 137.5 + frameRef.current * 0.1) % W;
+        const sy = (i * 97.3 + frameRef.current * 0.05) % H;
+        const twinkle = Math.sin(frameRef.current * 0.05 + i) * 0.5 + 0.5;
+        ctx.globalAlpha = twinkle * 0.8;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(sx, sy, 1.5, 1.5);
+      }
+      ctx.globalAlpha = 1;
+
+      // Awakening effect
+      const color = characterInfo?.color1 || '#00E5FF';
+      drawAwakeningEffect(ctx, W / 2, H / 2, awakeningProgressRef.current, heroRef.current.image, color);
+
+      // Text
+      if (awakeningProgressRef.current > 0.3 && characterInfo) {
+        const textAlpha = Math.min(1, (awakeningProgressRef.current - 0.3) / 0.3);
+        ctx.globalAlpha = textAlpha;
+        ctx.fillStyle = color;
+        ctx.font = 'bold 28px monospace';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 20;
+        ctx.fillText(`"${characterInfo.characterName}"`, W / 2, H / 2 + 70);
+        ctx.shadowBlur = 0;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '14px monospace';
+        ctx.fillText(characterInfo.description || '', W / 2, H / 2 + 95);
+
+        if (characterInfo.power) {
+          ctx.fillStyle = '#FFD740';
+          ctx.font = 'bold 13px monospace';
+          ctx.fillText(`Poder: ${characterInfo.power}`, W / 2, H / 2 + 120);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      frameRef.current++;
+
+      if (awakeningProgressRef.current >= 1.0) {
+        // Start battle
+        setPhase('playing');
+        return;
+      }
+
+      gameLoopRef.current = requestAnimationFrame(loop);
+    };
+    gameLoopRef.current = requestAnimationFrame(loop);
+
+    return () => { running = false; cancelAnimationFrame(gameLoopRef.current); };
+  }, [phase, characterInfo]);
+
+  // ============================================
+  // SPAWN MONSTER
+  // ============================================
+  function spawnMonster(canvas: HTMLCanvasElement): Monster {
+    const wave = waveRef.current.wave;
+    const availableTypes: MonsterType[] = ['slime', 'ghost', 'bat'];
+    if (wave >= 3) availableTypes.push('skeleton');
+    if (wave >= 5 && wave % 3 === 0) availableTypes.push('boss');
+
+    const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+    const stats = MONSTER_STATS[type];
+    const hpMult = 1 + (wave - 1) * 0.25;
+
+    // Spawn at random edges and positions across the "room"
+    const edge = Math.floor(Math.random() * 4);
+    let x: number, y: number;
+    switch (edge) {
+      case 0: x = Math.random() * canvas.width; y = 30; break; // top
+      case 1: x = Math.random() * canvas.width; y = canvas.height - 60; break; // bottom
+      case 2: x = 30; y = Math.random() * canvas.height * 0.6 + 30; break; // left
+      default: x = canvas.width - 30; y = Math.random() * canvas.height * 0.6 + 30; break; // right
+    }
+
+    const tx = canvas.width * 0.2 + Math.random() * canvas.width * 0.6;
+    const ty = canvas.height * 0.15 + Math.random() * canvas.height * 0.4;
+
+    return {
+      id: monsterIdRef.current++,
+      x, y, targetX: tx, targetY: ty,
+      hp: Math.floor(stats.hp * hpMult),
+      maxHp: Math.floor(stats.hp * hpMult),
+      type,
+      frame: Math.random() * 100,
+      frameTimer: 0,
+      direction: 1,
+      speed: stats.speed * (0.7 + Math.random() * 0.6),
+      hitTimer: 0,
+      attackTimer: 0,
+      alive: true,
+      deathTimer: 0,
+      size: stats.size,
+      moveTimer: 0,
+    };
+  }
+
+  // ============================================
+  // ATTACK MONSTER
+  // ============================================
+  function attackMonster(monster: Monster, isSkill: boolean) {
+    const hero = heroRef.current;
+    const baseDmg = hero.attack + hero.level * 2;
+    const comboMult = 1 + hero.combo * 0.08;
+    const skillMult = isSkill ? 2.5 : 1;
+    const isCrit = Math.random() < 0.12 + hero.level * 0.015;
+    const critMult = isCrit ? 2.2 : 1;
+    const dmg = Math.floor(baseDmg * comboMult * skillMult * critMult * (0.85 + Math.random() * 0.3));
+
+    monster.hp -= dmg;
+    monster.hitTimer = 8;
+    hero.combo = Math.min(hero.combo + 1, 12);
+
+    damageNumbersRef.current.push({
+      id: effectIdRef.current++,
+      value: dmg,
+      x: monster.x + (Math.random() - 0.5) * 20,
+      y: monster.y - 30,
+      color: isCrit ? '#FFD700' : '#ffffff',
+      life: 35,
+      vy: -1.5,
+    });
+
+    // Hit particles
+    const pColor = characterInfo?.color1 || '#00E5FF';
+    for (let i = 0; i < (isCrit ? 12 : 4); i++) {
+      particlesRef.current.push({
+        x: monster.x + (Math.random() - 0.5) * 30,
+        y: monster.y + (Math.random() - 0.5) * 30,
+        vx: (Math.random() - 0.5) * 5,
+        vy: (Math.random() - 0.5) * 5 - 1,
+        life: 15 + Math.random() * 10,
+        maxLife: 25,
+        color: isCrit ? '#FFD700' : pColor,
+        size: 2 + Math.random() * 4,
+      });
+    }
+
+    if (monster.hp <= 0) {
+      monster.alive = false;
+      monster.deathTimer = 25;
+      hero.exp += 15 + monster.maxHp * 0.15;
+      waveRef.current.score += Math.floor(monster.maxHp * 1.2);
+      waveRef.current.totalKills++;
+
+      floatingTextsRef.current.push({
+        id: effectIdRef.current++,
+        text: `+${Math.floor(monster.maxHp * 1.2)} pts`,
+        x: monster.x, y: monster.y - 50,
+        color: '#FFD700', life: 45, size: 14,
+      });
+
+      // Level up
+      const expNeeded = hero.level * 60;
+      if (hero.exp >= expNeeded) {
+        hero.level++;
+        hero.exp -= expNeeded;
+        hero.maxHp += 10;
+        hero.hp = Math.min(hero.hp + 20, hero.maxHp);
+        hero.attack += 2;
+        hero.maxMana += 3;
+        hero.mana = Math.min(hero.mana + 10, hero.maxMana);
+        floatingTextsRef.current.push({
+          id: effectIdRef.current++,
+          text: `NIVEL ${hero.level}!`,
+          x: hero.x, y: hero.y - 70,
+          color: '#00FF88', life: 70, size: 22,
         });
       }
+
+      // Death particles
+      for (let i = 0; i < 20; i++) {
+        const mColors = MONSTER_COLORS[monster.type] || [['#aaa', '#888']];
+        const mc = mColors[0][0];
+        particlesRef.current.push({
+          x: monster.x, y: monster.y,
+          vx: (Math.random() - 0.5) * 8,
+          vy: (Math.random() - 0.5) * 8,
+          life: 20 + Math.random() * 15, maxLife: 35,
+          color: mc, size: 3 + Math.random() * 5,
+        });
+      }
+    }
+  }
+
+  // ============================================
+  // HANDLE TAP (move hero or attack)
+  // ============================================
+  const handleTap = (e: React.TouchEvent | React.MouseEvent) => {
+    if (phase !== 'playing') return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    let cx: number, cy: number;
+    if ('touches' in e) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
+    else { cx = e.clientX; cy = e.clientY; }
+
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const tapX = (cx - rect.left) * scaleX;
+    const tapY = (cy - rect.top) * scaleY;
+
+    const hero = heroRef.current;
+
+    // Check if tapped on a monster
+    let hitMonster: Monster | null = null;
+    let closest = Infinity;
+    monstersRef.current.forEach(m => {
+      if (!m.alive) return;
+      const d = Math.sqrt((tapX - m.x) ** 2 + (tapY - m.y) ** 2);
+      const hitRadius = 40 * m.size;
+      if (d < hitRadius && d < closest) { closest = d; hitMonster = m; }
+    });
+
+    if (hitMonster) {
+      // Attack the monster
+      hero.attacking = true;
+      hero.attackTimer = 15;
+      hero.direction = hitMonster.x > hero.x ? 1 : -1;
+      // Move toward monster
+      hero.targetX = hitMonster.x;
+      hero.targetY = hitMonster.y;
+      attackMonster(hitMonster, false);
+    } else {
+      // Move hero to tap position
+      hero.targetX = tapX;
+      hero.targetY = tapY;
+      hero.combo = 0;
+    }
+  };
+
+  // ============================================
+  // USE SKILL
+  // ============================================
+  const useSkill = () => {
+    if (phase !== 'playing') return;
+    const hero = heroRef.current;
+    if (hero.mana < 15) return;
+
+    hero.mana -= 15;
+    hero.skillActive = true;
+    hero.skillTimer = 25;
+    hero.attacking = true;
+    hero.attackTimer = 15;
+
+    const sColor = characterInfo?.color1 || '#00E5FF';
+    skillEffectsRef.current.push({
+      x: hero.x, y: hero.y,
+      radius: 0, maxRadius: 180,
+      life: 25, color: sColor,
+    });
+
+    monstersRef.current.forEach(m => {
+      if (!m.alive) return;
+      const d = Math.sqrt((m.x - hero.x) ** 2 + (m.y - hero.y) ** 2);
+      if (d < 180) attackMonster(m, true);
+    });
+  };
+
+  // ============================================
+  // MAIN GAME LOOP
+  // ============================================
+  function gameLoop(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
+    frameRef.current++;
+    const frame = frameRef.current;
+    const hero = heroRef.current;
+    const W = canvas.width;
+    const H = canvas.height;
+    const wave = waveRef.current;
+
+    // Hero stays at bottom center by default
+    if (hero.targetX === 0 && hero.targetY === 0) {
+      hero.targetX = W / 2;
+      hero.targetY = H * 0.75;
+    }
+
+    // Move hero toward target
+    const dx = hero.targetX - hero.x;
+    const dy = hero.targetY - hero.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 3) {
+      hero.x += (dx / dist) * hero.speed;
+      hero.y += (dy / dist) * hero.speed;
+      if (dx !== 0) hero.direction = dx > 0 ? 1 : -1;
+    }
+
+    // Keep hero in bounds
+    hero.x = Math.max(40, Math.min(W - 40, hero.x));
+    hero.y = Math.max(40, Math.min(H - 40, hero.y));
+
+    // Hero animation
+    hero.frame++;
+    hero.bobOffset = Math.sin(hero.frame * 0.08) * 4;
+    if (hero.hitTimer > 0) hero.hitTimer--;
+    if (hero.attackTimer > 0) { hero.attackTimer--; if (hero.attackTimer <= 0) hero.attacking = false; }
+    if (hero.skillTimer > 0) hero.skillTimer--;
+    else hero.skillActive = false;
+
+    // Mana regen
+    if (frame % 45 === 0) hero.mana = Math.min(hero.mana + 2, hero.maxMana);
+
+    // Spawn monsters
+    const aliveMonsters = monstersRef.current.filter(m => m.alive);
+    if (aliveMonsters.length < Math.min(wave.monstersPerWave, 2 + wave.wave)) {
+      spawnTimerRef.current++;
+      if (spawnTimerRef.current > 80) {
+        monstersRef.current.push(spawnMonster(canvas));
+        spawnTimerRef.current = 0;
+      }
+    }
+
+    // Auto-attack nearest monster when close enough
+    aliveMonsters.forEach(m => {
+      const md = Math.sqrt((hero.x - m.x) ** 2 + (hero.y - m.y) ** 2);
+      if (md < 50 * m.size && !hero.attacking) {
+        hero.attacking = true;
+        hero.attackTimer = 12;
+        hero.direction = m.x > hero.x ? 1 : -1;
+        attackMonster(m, false);
+      }
+    });
+
+    // Update monsters
+    monstersRef.current.forEach(m => {
+      if (!m.alive) { m.deathTimer--; return; }
+
+      m.frame++;
+      if (m.hitTimer > 0) m.hitTimer--;
+
+      // Move monster toward its target or toward hero
+      m.moveTimer++;
+      if (m.moveTimer > 120) {
+        m.moveTimer = 0;
+        // Pick new random target near hero or random room position
+        if (Math.random() > 0.3) {
+          m.targetX = hero.x + (Math.random() - 0.5) * 200;
+          m.targetY = hero.y + (Math.random() - 0.5) * 150;
+        } else {
+          m.targetX = W * 0.1 + Math.random() * W * 0.8;
+          m.targetY = H * 0.1 + Math.random() * H * 0.5;
+        }
+        m.targetX = Math.max(30, Math.min(W - 30, m.targetX));
+        m.targetY = Math.max(30, Math.min(H - 50, m.targetY));
+      }
+
+      const mdx = m.targetX - m.x;
+      const mdy = m.targetY - m.y;
+      const mDist = Math.sqrt(mdx * mdx + mdy * mdy);
+      if (mDist > 5) {
+        m.x += (mdx / mDist) * m.speed;
+        m.y += (mdy / mDist) * m.speed * 0.7;
+        if (mdx !== 0) m.direction = mdx > 0 ? 1 : -1;
+      }
+
+      // Monster attack hero
+      const heroDist = Math.sqrt((hero.x - m.x) ** 2 + (hero.y - m.y) ** 2);
+      if (heroDist < 45 * m.size) {
+        m.attackTimer++;
+        if (m.attackTimer > 50) {
+          m.attackTimer = 0;
+          const mDmg = Math.max(1, MONSTER_STATS[m.type].damage - Math.floor(hero.defense * 0.3));
+          hero.hp -= mDmg;
+          hero.hitTimer = 8;
+          floatingTextsRef.current.push({
+            id: effectIdRef.current++,
+            text: `-${mDmg}`,
+            x: hero.x + (Math.random() - 0.5) * 15,
+            y: hero.y - 40,
+            color: '#ff4444', life: 35, size: 18,
+          });
+        }
+      }
+
+      // Bounds
+      m.x = Math.max(20, Math.min(W - 20, m.x));
+      m.y = Math.max(20, Math.min(H - 40, m.y));
+    });
+
+    // Remove dead
+    monstersRef.current = monstersRef.current.filter(m => m.alive || m.deathTimer > 0);
+
+    // Update effects
+    damageNumbersRef.current = damageNumbersRef.current.filter(d => { d.life--; d.y += d.vy; d.vy -= 0.04; return d.life > 0; });
+    particlesRef.current = particlesRef.current.filter(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.12; p.life--; return p.life > 0; });
+    floatingTextsRef.current = floatingTextsRef.current.filter(t => { t.life--; t.y -= 0.4; return t.life > 0; });
+    skillEffectsRef.current = skillEffectsRef.current.filter(e => { e.life--; e.radius = e.maxRadius * (1 - e.life / 25); return e.life > 0; });
+
+    // Wave check
+    if (aliveMonsters.length === 0 && monstersRef.current.length > 0 && monstersRef.current.every(m => !m.alive)) {
+      wave.wave++;
+      wave.monstersPerWave = Math.min(2 + wave.wave, 7);
+      monstersRef.current = [];
+      spawnTimerRef.current = 0;
+      hero.hp = Math.min(hero.hp + Math.floor(hero.maxHp * 0.15), hero.maxHp);
+      floatingTextsRef.current.push({
+        id: effectIdRef.current++,
+        text: `OLEADA ${wave.wave}!`,
+        x: W / 2, y: H / 3,
+        color: '#00FF88', life: 80, size: 26,
+      });
+    }
+
+    // Game over
+    if (hero.hp <= 0) {
+      hero.hp = 0;
+      if (wave.score > wave.highScore) wave.highScore = wave.score;
+      setDKills(wave.totalKills);
+      setDHighScore(wave.highScore);
+      setPhase('gameover');
+    }
+
+    // Victory
+    if (wave.wave > 8) {
+      setDKills(wave.totalKills);
+      setDHighScore(wave.highScore);
+      setPhase('victory');
+    }
+
+    // ========== RENDER ==========
+    ctx.clearRect(0, 0, W, H);
+
+    // Virtual background (since camera is stopped during battle)
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+    bgGrad.addColorStop(0, '#1a1a2e');
+    bgGrad.addColorStop(0.4, '#16213e');
+    bgGrad.addColorStop(1, '#0f3460');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Stars
+    for (let i = 0; i < 30; i++) {
+      const sx = (i * 137.5) % W;
+      const sy = (i * 97.3) % (H * 0.5);
+      const tw = Math.sin(frame * 0.03 + i) * 0.5 + 0.5;
+      ctx.globalAlpha = tw * 0.5;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(sx, sy, 1.5, 1.5);
+    }
+    ctx.globalAlpha = 1;
+
+    // Floor
+    ctx.fillStyle = '#1a3a1a';
+    ctx.fillRect(0, H * 0.82, W, H * 0.18);
+    ctx.fillStyle = '#2a5a2a';
+    ctx.fillRect(0, H * 0.82, W, 3);
+
+    // Skill effects
+    skillEffectsRef.current.forEach(e => {
+      ctx.save();
+      ctx.globalAlpha = e.life / 25 * 0.35;
+      ctx.strokeStyle = e.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = e.life / 25 * 0.1;
+      ctx.fillStyle = e.color;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // Monsters
+    monstersRef.current.forEach(m => {
+      const drawFn = MONSTER_DRAW[m.type];
+      if (drawFn) {
+        const colors = MONSTER_COLORS[m.type];
+        const colorPair = colors ? colors[0] : undefined;
+        drawFn(ctx, m.x, m.y, m.size, m.frame, m.direction, m.hitTimer, m.deathTimer,
+          m.type === 'slime' ? colorPair?.[0] : undefined,
+          m.type === 'slime' ? colorPair?.[1] : undefined
+        );
+      }
+      if (m.alive) {
+        drawHealthBar(ctx, m.x - 30, m.y - 35 * m.size, 60, 8, m.hp, m.maxHp, '#e74c3c');
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${Math.max(9, 11 - m.type === 'boss' ? 0 : 2)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText(MONSTER_NAMES[m.type], m.x, m.y - 40 * m.size);
+      }
+    });
+
+    // Hero
+    drawDrawingHero(ctx, hero);
+
+    // Particles
+    particlesRef.current.forEach(p => {
+      ctx.save();
+      ctx.globalAlpha = p.life / p.maxLife;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+      ctx.restore();
+    });
+
+    // Damage numbers
+    damageNumbersRef.current.forEach(d => {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, d.life / 15);
+      ctx.fillStyle = d.color;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = d.value > 25 ? 3 : 2;
+      const sz = d.value > 25 ? 22 : 16;
+      ctx.font = `bold ${sz}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.strokeText(`${d.value}`, d.x, d.y);
+      ctx.fillText(`${d.value}`, d.x, d.y);
+      ctx.restore();
+    });
+
+    // Floating texts
+    floatingTextsRef.current.forEach(t => {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, t.life / 12);
+      ctx.fillStyle = t.color;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2.5;
+      ctx.font = `bold ${t.size}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.strokeText(t.text, t.x, t.y);
+      ctx.fillText(t.text, t.x, t.y);
+      ctx.restore();
+    });
+
+    // Sync display state
+    if (frame % 5 === 0) {
+      setDScore(wave.score);
+      setDWave(wave.wave);
+      setDHp(hero.hp);
+      setDMaxHp(hero.maxHp);
+      setDMana(hero.mana);
+      setDMaxMana(hero.maxMana);
+      setDLevel(hero.level);
+      setDExp(hero.exp);
+      setDCombo(hero.combo);
+      setDKills(wave.totalKills);
+      setDHighScore(wave.highScore);
+    }
+  }
+
+  // ============================================
+  // GAME LOOP EFFECT
+  // ============================================
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let running = true;
+    const loop = () => {
+      if (!running) return;
+      gameLoop(canvas, ctx);
+      gameLoopRef.current = requestAnimationFrame(loop);
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState]);
+    gameLoopRef.current = requestAnimationFrame(loop);
+    return () => { running = false; cancelAnimationFrame(gameLoopRef.current); };
+  }, [phase]);
+
+  // ============================================
+  // START / RESTART
+  // ============================================
+  const startBattle = useCallback(() => {
+    const h = heroRef.current;
+    h.hp = h.maxHp;
+    h.mana = h.maxMana;
+    h.combo = 0;
+    h.exp = 0;
+    h.level = 1;
+    h.x = 320; h.y = 380;
+    h.targetX = 320; h.targetY = 380;
+    h.attacking = false; h.attackTimer = 0; h.hitTimer = 0;
+    monstersRef.current = [];
+    damageNumbersRef.current = [];
+    particlesRef.current = [];
+    floatingTextsRef.current = [];
+    skillEffectsRef.current = [];
+    waveRef.current = { wave: 1, monstersPerWave: 3, score: 0, highScore: waveRef.current.highScore, totalKills: 0, monsterTypes: ['slime'] };
+    spawnTimerRef.current = 0;
+    setPhase('playing');
+  }, []);
+
+  const goToScan = useCallback(() => {
+    setPhase('scanning');
+    setCharacterInfo(null);
+    setHeroImage(null);
+    frameRef.current = 0;
+    awakeningProgressRef.current = 0;
+    // Re-start camera for scanning
+    if (videoRef.current) {
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      }).then(stream => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+          cameraReadyRef.current = true;
+          setCameraReady(true);
+        }
+      }).catch(() => setCameraReady(false));
+    }
+  }, []);
+
+  // Keyboard
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === ' ' || e.key === 'e') {
+        if (phase === 'playing') {
+          const hero = heroRef.current;
+          if (hero.mana >= 15) {
+            hero.mana -= 15;
+            hero.skillActive = true; hero.skillTimer = 25; hero.attacking = true; hero.attackTimer = 15;
+            const sColor = characterInfo?.color1 || '#00E5FF';
+            skillEffectsRef.current.push({ x: hero.x, y: hero.y, radius: 0, maxRadius: 180, life: 25, color: sColor });
+            monstersRef.current.forEach(m => {
+              if (!m.alive) return;
+              if (Math.sqrt((m.x - hero.x) ** 2 + (m.y - hero.y) ** 2) < 180) attackMonster(m, true);
+            });
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [phase, characterInfo]);
 
   // ============================================
   // RENDER
   // ============================================
-  const expNeeded = displayLevel * 80;
+  const expNeeded = dLevel * 60;
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-black select-none" style={{ touchAction: 'none' }}>
-      {/* Camera Video (AR Background) */}
+      {/* Hidden capture canvas */}
+      <canvas ref={captureCanvasRef} className="hidden" />
+
+      {/* Camera video (only during scanning) */}
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover"
-        playsInline
-        muted
-        style={{ zIndex: 0, display: cameraReady ? 'block' : 'none' }}
+        playsInline muted
+        style={{ zIndex: 0, display: phase === 'scanning' ? 'block' : 'none' }}
       />
 
-      {/* Game Canvas */}
-      <canvas
-        ref={canvasRef}
-        width={640}
-        height={480}
-        className="absolute inset-0 w-full h-full"
-        style={{ zIndex: 1 }}
-        onTouchStart={(e) => { e.preventDefault(); handleCanvasTap(e); }}
-        onClick={handleCanvasTap}
-      />
+      {/* Scan overlay guide */}
+      {phase === 'scanning' && (
+        <div className="absolute inset-0" style={{ zIndex: 1 }}>
+          {/* Corner guides */}
+          <div className="absolute top-1/4 left-1/4 w-1/2 h-1/2 border-2 border-white/60 rounded-lg">
+            <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-yellow-400 rounded-tl-lg" />
+            <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-yellow-400 rounded-tr-lg" />
+            <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-yellow-400 rounded-bl-lg" />
+            <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-yellow-400 rounded-br-lg" />
+          </div>
 
-      {/* HUD Overlay */}
-      {gameState === 'playing' && (
+          {/* Instructions */}
+          <div className="absolute top-8 left-0 right-0 text-center">
+            <p className="text-white font-bold text-lg" style={{ textShadow: '2px 2px 4px #000' }}>
+              Apunta la camara al dibujo
+            </p>
+            <p className="text-white/70 text-sm mt-1">Coloca el dibujo dentro del recuadro</p>
+          </div>
+
+          {/* Scan button */}
+          <button
+            onClick={scanDrawing}
+            className="absolute bottom-20 left-1/2 -translate-x-1/2 pointer-events-auto active:scale-90 transition-transform"
+            style={{ zIndex: 5 }}
+          >
+            <div className="w-20 h-20 rounded-full border-4 border-white bg-white/20 backdrop-blur-sm flex items-center justify-center">
+              <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center">
+                <div className="w-14 h-14 rounded-full bg-gradient-to-b from-blue-400 to-blue-600 flex items-center justify-center">
+                  <span className="text-white text-2xl font-bold">SCAN</span>
+                </div>
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => setPhase('menu')}
+            className="absolute bottom-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg px-4 py-2 pointer-events-auto active:scale-95 transition-transform"
+            style={{ zIndex: 5 }}
+          >
+            <span className="text-white text-sm">Atras</span>
+          </button>
+        </div>
+      )}
+
+      {/* Analyzing overlay */}
+      {phase === 'analyzing' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80" style={{ zIndex: 10 }}>
+          <div className="text-center px-6">
+            <div className="relative w-24 h-24 mx-auto mb-6">
+              <div className="absolute inset-0 border-4 border-yellow-400/30 rounded-full" />
+              <div className="absolute inset-0 border-4 border-transparent border-t-yellow-400 rounded-full animate-spin" />
+              <div className="absolute inset-3 border-4 border-transparent border-t-cyan-400 rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '0.8s' }} />
+              {heroImage && (
+                <img src={heroImage} alt="scan" className="absolute inset-4 object-contain rounded animate-pulse" />
+              )}
+            </div>
+            <p className="text-yellow-400 font-bold text-xl animate-pulse">Analizando dibujo...</p>
+            <p className="text-white/60 text-sm mt-2">El dibujo esta cobrando vida</p>
+          </div>
+        </div>
+      )}
+
+      {/* Game canvas (awakening + playing) */}
+      {(phase === 'awakening' || phase === 'playing' || phase === 'gameover' || phase === 'victory') && (
+        <canvas
+          ref={canvasRef}
+          width={640}
+          height={480}
+          className="absolute inset-0 w-full h-full"
+          style={{ zIndex: 1 }}
+          onTouchStart={(e) => { e.preventDefault(); handleTap(e); }}
+          onClick={handleTap}
+        />
+      )}
+
+      {/* Battle HUD */}
+      {phase === 'playing' && (
         <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 2 }}>
-          {/* Top Bar */}
-          <div className="absolute top-0 left-0 right-0 p-2 safe-area-top flex flex-col gap-1">
-            {/* Wave & Score */}
-            <div className="flex justify-between items-center px-2">
-              <div className="bg-black/60 backdrop-blur-sm rounded-lg px-3 py-1">
-                <span className="text-yellow-400 font-bold text-xs">OLEADA {displayWave}/10</span>
+          {/* Top bar */}
+          <div className="absolute top-0 left-0 right-0 p-2 flex flex-col gap-1 safe-area-top">
+            <div className="flex justify-between items-center px-1">
+              <div className="bg-black/60 backdrop-blur-sm rounded-lg px-2 py-1">
+                <span className="text-yellow-400 font-bold text-xs">OLEADA {dWave}/8</span>
               </div>
-              <div className="bg-black/60 backdrop-blur-sm rounded-lg px-3 py-1">
-                <span className="text-white font-bold text-xs">{displayScore} pts</span>
+              <div className="bg-black/60 backdrop-blur-sm rounded-lg px-2 py-1">
+                <span className="text-white font-bold text-xs">{dHeroName}</span>
               </div>
-              <div className="bg-black/60 backdrop-blur-sm rounded-lg px-3 py-1">
-                <span className="text-cyan-400 font-bold text-xs">NV.{displayLevel}</span>
+              <div className="bg-black/60 backdrop-blur-sm rounded-lg px-2 py-1">
+                <span className="text-white font-bold text-xs">{dScore} pts</span>
+              </div>
+              <div className="bg-black/60 backdrop-blur-sm rounded-lg px-2 py-1">
+                <span className="text-cyan-400 font-bold text-xs">NV.{dLevel}</span>
               </div>
             </div>
 
-            {/* Health Bar */}
-            <div className="mx-2">
-              <div className="flex items-center gap-2">
-                <div className="flex gap-0.5">
-                  {Array.from({ length: Math.min(5, Math.ceil(displayHp / 20)) }).map((_, i) => (
-                    <div key={i} className="w-3 h-3 bg-red-500 rounded-sm border border-red-300" />
-                  ))}
-                  {Array.from({ length: Math.max(0, 5 - Math.ceil(displayHp / 20)) }).map((_, i) => (
-                    <div key={`empty-${i}`} className="w-3 h-3 bg-gray-700 rounded-sm border border-gray-600" />
-                  ))}
-                </div>
+            {/* HP */}
+            <div className="mx-1">
+              <div className="flex items-center gap-1">
+                <span className="text-red-400 text-xs font-bold">HP</span>
                 <div className="flex-1 h-3 bg-gray-800 rounded-full overflow-hidden border border-gray-600">
-                  <div
-                    className="h-full rounded-full transition-all duration-300"
-                    style={{
-                      width: `${(displayHp / displayMaxHp) * 100}%`,
-                      background: displayHp / displayMaxHp > 0.5
-                        ? 'linear-gradient(to bottom, #ff6b6b, #ee5a24)'
-                        : 'linear-gradient(to bottom, #ff4757, #c0392b)',
-                    }}
-                  />
+                  <div className="h-full rounded-full transition-all duration-300"
+                    style={{ width: `${(dHp / dMaxHp) * 100}%`, background: 'linear-gradient(to bottom, #ff6b6b, #ee5a24)' }} />
                 </div>
-                <span className="text-white text-xs font-bold min-w-[50px] text-right">
-                  {displayHp}/{displayMaxHp}
-                </span>
+                <span className="text-white text-xs font-bold min-w-[40px] text-right">{dHp}/{dMaxHp}</span>
               </div>
             </div>
-
-            {/* Mana Bar */}
-            <div className="mx-2">
-              <div className="flex items-center gap-2">
+            {/* MP */}
+            <div className="mx-1">
+              <div className="flex items-center gap-1">
                 <span className="text-blue-400 text-xs font-bold">MP</span>
                 <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden border border-gray-600">
-                  <div
-                    className="h-full rounded-full transition-all duration-300"
-                    style={{
-                      width: `${(displayMana / displayMaxMana) * 100}%`,
-                      background: 'linear-gradient(to bottom, #74b9ff, #0984e3)',
-                    }}
-                  />
+                  <div className="h-full rounded-full transition-all duration-300"
+                    style={{ width: `${(dMana / dMaxMana) * 100}%`, background: 'linear-gradient(to bottom, #74b9ff, #0984e3)' }} />
                 </div>
-                <span className="text-blue-300 text-xs font-bold min-w-[40px] text-right">
-                  {displayMana}/{displayMaxMana}
-                </span>
               </div>
             </div>
-
-            {/* EXP Bar */}
-            <div className="mx-2">
-              <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden border border-gray-600">
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{
-                    width: `${(displayExp / expNeeded) * 100}%`,
-                    background: 'linear-gradient(to bottom, #a29bfe, #6c5ce7)',
-                  }}
-                />
+            {/* EXP */}
+            <div className="mx-1">
+              <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden border border-gray-600">
+                <div className="h-full rounded-full transition-all duration-300"
+                  style={{ width: `${(dExp / expNeeded) * 100}%`, background: 'linear-gradient(to bottom, #a29bfe, #6c5ce7)' }} />
               </div>
             </div>
-
-            {/* Combo */}
-            {displayCombo > 1 && (
+            {dCombo > 1 && (
               <div className="text-center">
-                <span className="text-yellow-400 font-black text-lg animate-pulse">
-                  COMBO x{displayCombo}!
-                </span>
+                <span className="text-yellow-400 font-black text-base animate-pulse">COMBO x{dCombo}!</span>
               </div>
             )}
           </div>
 
-          {/* Skill Button */}
+          {/* Skill button */}
           <div className="absolute bottom-4 right-4 pointer-events-auto safe-area-bottom">
-            <button
-              onClick={useSkill}
-              className={`w-16 h-16 rounded-full border-4 border-cyan-400 flex items-center justify-center shadow-lg active:scale-90 transition-transform ${
-                displayMana >= 20 ? 'bg-cyan-600/80' : 'bg-gray-700/80 border-gray-500'
-              }`}
-            >
-              <span className="text-white font-black text-lg">&#9889;</span>
+            <button onClick={useSkill}
+              className={`w-16 h-16 rounded-full border-4 border-cyan-400 flex items-center justify-center shadow-lg active:scale-90 transition-transform ${dMana >= 15 ? 'bg-cyan-600/80' : 'bg-gray-700/80 border-gray-500'}`}>
+              <span className="text-white font-black text-lg">{characterInfo?.power?.charAt(0) || '?'}</span>
             </button>
             <div className="text-center mt-1">
-              <span className="text-cyan-300 text-xs font-bold">Habilidad</span>
+              <span className="text-cyan-300 text-xs font-bold">{characterInfo?.power || 'Poder'}</span>
             </div>
           </div>
 
-          {/* Pause hint */}
           <div className="absolute bottom-4 left-4">
-            <button
-              onClick={() => setGameState('paused')}
-              className="bg-black/60 backdrop-blur-sm rounded-lg px-3 py-2 pointer-events-auto active:scale-95 transition-transform"
-            >
-              <span className="text-white text-xl">&#9208;&#65039;</span>
+            <button onClick={() => setPhase('paused')}
+              className="bg-black/60 backdrop-blur-sm rounded-lg px-3 py-2 pointer-events-auto active:scale-95 transition-transform">
+              <span className="text-white text-lg">| |</span>
             </button>
           </div>
-
-          {/* Camera indicator */}
-          {cameraError && (
-            <div className="absolute bottom-16 left-4 bg-yellow-900/80 backdrop-blur-sm rounded-lg px-3 py-2">
-              <span className="text-yellow-300 text-xs">Modo fondo virtual (sin camara)</span>
-            </div>
-          )}
         </div>
       )}
 
-      {/* MENU SCREEN */}
-      {gameState === 'menu' && (
-        <div className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 10 }}>
+      {/* MENU */}
+      {phase === 'menu' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-gray-950 via-indigo-950/50 to-gray-950" style={{ zIndex: 10 }}>
           <div className="text-center px-6 max-w-md">
-            <h1 className="text-5xl font-black text-yellow-400 mb-2 drop-shadow-lg"
-              style={{ textShadow: '3px 3px 0 #000, -1px -1px 0 #000' }}>
-              DRAGON QUEST
+            <div className="text-6xl mb-3 animate-bounce">✏️</div>
+            <h1 className="text-4xl font-black text-white mb-1" style={{ textShadow: '2px 2px 0 #000' }}>
+              DIBUJO WARRIOR
             </h1>
-            <h2 className="text-2xl font-bold text-white mb-1"
-              style={{ textShadow: '2px 2px 0 #000' }}>
-              Realidad Aumentada
-            </h2>
-            <div className="text-cyan-300 text-sm mb-8">Pixel Art Adventure</div>
+            <h2 className="text-xl font-bold text-cyan-400 mb-1">Realidad Aumentada</h2>
+            <p className="text-yellow-300/80 text-sm mb-8">Tu dibujo cobra vida y pelea contra monstruos</p>
 
-            <div className="space-y-3 mb-8">
-              <p className="text-white/80 text-sm">
-                Usa tu camara como escenario AR
-              </p>
-              <p className="text-white/80 text-sm">
-                Toca los dragones para atacarlos
-              </p>
-              <p className="text-white/80 text-sm">
-                Usa la habilidad especial con el boton azul
-              </p>
-              <p className="text-white/80 text-sm">
-                Sobrevive 10 oleadas para ganar
-              </p>
+            <div className="space-y-2 mb-8 text-left bg-black/40 rounded-xl p-4">
+              <p className="text-white/80 text-sm">1. Escanea un dibujo con la camara</p>
+              <p className="text-white/80 text-sm">2. La IA le da poderes al dibujo</p>
+              <p className="text-white/80 text-sm">3. El dibujo cobra vida como guerrero</p>
+              <p className="text-white/80 text-sm">4. Monstruos aparecen en la habitacion</p>
+              <p className="text-white/80 text-sm">5. Toca los monstruos para pelear</p>
             </div>
 
-            <button
-              onClick={startGame}
-              className="bg-gradient-to-b from-yellow-400 to-orange-500 text-black font-black text-xl px-10 py-4 rounded-xl shadow-lg active:scale-95 transition-transform pointer-events-auto"
-              style={{ textShadow: '1px 1px 0 rgba(255,255,255,0.5)' }}
-            >
-              JUGAR!
+            <button onClick={goToScan}
+              className="bg-gradient-to-b from-yellow-400 to-orange-500 text-black font-black text-xl px-10 py-4 rounded-xl shadow-lg active:scale-95 transition-transform pointer-events-auto">
+              ESCANEAR DIBUJO
             </button>
 
-            <div className="mt-6 text-white/50 text-xs">
-              {cameraError ? 'Modo sin camara activo' : 'Mejor experiencia en movil con camara'}
-            </div>
+            {heroImage && (
+              <button onClick={() => { setPhase('awakening'); awakeningProgressRef.current = 0; }}
+                className="block w-full mt-3 bg-gradient-to-b from-green-400 to-emerald-600 text-black font-bold text-base px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto">
+                JUGAR CON ULTIMO DIBUJO
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {/* PAUSE SCREEN */}
-      {gameState === 'paused' && (
+      {/* PAUSED */}
+      {phase === 'paused' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm" style={{ zIndex: 10 }}>
           <div className="text-center px-6">
             <h2 className="text-4xl font-black text-white mb-6">PAUSA</h2>
             <div className="space-y-3">
-              <button
-                onClick={() => setGameState('playing')}
-                className="block w-full bg-green-600 text-white font-bold text-lg px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto"
-              >
-                Continuar
-              </button>
-              <button
-                onClick={startGame}
-                className="block w-full bg-red-600 text-white font-bold text-lg px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto"
-              >
-                Reiniciar
-              </button>
-              <button
-                onClick={() => setGameState('menu')}
-                className="block w-full bg-gray-600 text-white font-bold text-lg px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto"
-              >
-                Menu
-              </button>
+              <button onClick={() => setPhase('playing')} className="block w-full bg-green-600 text-white font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Continuar</button>
+              <button onClick={startBattle} className="block w-full bg-red-600 text-white font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Reiniciar Batalla</button>
+              <button onClick={goToScan} className="block w-full bg-blue-600 text-white font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Escanear Otro Dibujo</button>
+              <button onClick={() => setPhase('menu')} className="block w-full bg-gray-600 text-white font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Menu</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* GAME OVER SCREEN */}
-      {gameState === 'gameover' && (
+      {/* GAME OVER */}
+      {phase === 'gameover' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm" style={{ zIndex: 10 }}>
           <div className="text-center px-6 max-w-sm">
             <h2 className="text-5xl font-black text-red-500 mb-4">GAME OVER</h2>
             <div className="bg-black/60 backdrop-blur-sm rounded-xl p-4 mb-6 space-y-2">
-              <p className="text-yellow-400 font-bold text-lg">Puntuacion: {displayScore}</p>
-              <p className="text-white/80">Oleada alcanzada: {displayWave}</p>
-              <p className="text-white/80">Dragones derrotados: {displayKills}</p>
-              <p className="text-white/80">Nivel alcanzado: {displayLevel}</p>
-              {displayHighScore > 0 && (
-                <p className="text-cyan-400 font-bold">Mejor puntuacion: {displayHighScore}</p>
-              )}
+              <p className="text-yellow-400 font-bold text-lg">Puntos: {dScore}</p>
+              <p className="text-white/80">Oleada: {dWave}/8</p>
+              <p className="text-white/80">Monstruos derrotados: {dKills}</p>
+              <p className="text-white/80">Nivel: {dLevel}</p>
+              {dHighScore > 0 && <p className="text-cyan-400 font-bold">Mejor: {dHighScore}</p>}
             </div>
             <div className="space-y-3">
-              <button
-                onClick={startGame}
-                className="block w-full bg-gradient-to-b from-yellow-400 to-orange-500 text-black font-bold text-lg px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto"
-              >
-                Reintentar!
-              </button>
-              <button
-                onClick={() => setGameState('menu')}
-                className="block w-full bg-gray-600 text-white font-bold text-lg px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto"
-              >
-                Menu
-              </button>
+              <button onClick={startBattle} className="block w-full bg-gradient-to-b from-yellow-400 to-orange-500 text-black font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Reintentar</button>
+              <button onClick={goToScan} className="block w-full bg-blue-600 text-white font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Escanear Otro Dibujo</button>
+              <button onClick={() => setPhase('menu')} className="block w-full bg-gray-600 text-white font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Menu</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* VICTORY SCREEN */}
-      {gameState === 'victory' && (
+      {/* VICTORY */}
+      {phase === 'victory' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm" style={{ zIndex: 10 }}>
           <div className="text-center px-6 max-w-sm">
             <h2 className="text-5xl font-black text-yellow-400 mb-4">VICTORIA!</h2>
-            <p className="text-white text-lg mb-4">Has derrotado a todos los dragones!</p>
+            <p className="text-white text-lg mb-4">Tu dibujo derrotó a todos los monstruos!</p>
             <div className="bg-black/60 backdrop-blur-sm rounded-xl p-4 mb-6 space-y-2">
-              <p className="text-yellow-400 font-bold text-2xl">Puntuacion Final: {displayScore}</p>
-              <p className="text-white/80">Dragones derrotados: {displayKills}</p>
-              <p className="text-white/80">Nivel final: {displayLevel}</p>
-              <p className="text-cyan-400 font-bold">Eres un legendario Dragon Slayer!</p>
+              <p className="text-yellow-400 font-bold text-2xl">Puntos: {dScore}</p>
+              <p className="text-white/80">Monstruos derrotados: {dKills}</p>
+              <p className="text-white/80">Nivel: {dLevel}</p>
+              <p className="text-cyan-400 font-bold">Eres un legendario Dibujo Warrior!</p>
             </div>
             <div className="space-y-3">
-              <button
-                onClick={startGame}
-                className="block w-full bg-gradient-to-b from-yellow-400 to-orange-500 text-black font-bold text-lg px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto"
-              >
-                Jugar de nuevo!
-              </button>
-              <button
-                onClick={() => setGameState('menu')}
-                className="block w-full bg-gray-600 text-white font-bold text-lg px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto"
-              >
-                Menu
-              </button>
+              <button onClick={startBattle} className="block w-full bg-gradient-to-b from-yellow-400 to-orange-500 text-black font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Jugar de nuevo</button>
+              <button onClick={goToScan} className="block w-full bg-blue-600 text-white font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Escanear Otro Dibujo</button>
+              <button onClick={() => setPhase('menu')} className="block w-full bg-gray-600 text-white font-bold text-lg px-8 py-3 rounded-xl pointer-events-auto active:scale-95 transition-transform">Menu</button>
             </div>
           </div>
         </div>

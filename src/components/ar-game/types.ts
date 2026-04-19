@@ -24,13 +24,15 @@ export interface Particle {
   size: number;
 }
 
-export interface Dragon {
+export interface Monster {
   id: number;
   x: number;
   y: number;
+  targetX: number;
+  targetY: number;
   hp: number;
   maxHp: number;
-  type: DragonType;
+  type: MonsterType;
   frame: number;
   frameTimer: number;
   direction: 1 | -1;
@@ -39,39 +41,57 @@ export interface Dragon {
   attackTimer: number;
   alive: boolean;
   deathTimer: number;
+  size: number;
+  moveTimer: number;
 }
 
-export type DragonType = 'green' | 'red' | 'blue' | 'gold' | 'shadow';
+export type MonsterType = 'slime' | 'ghost' | 'bat' | 'skeleton' | 'boss';
 
-export interface Hero {
+export interface DrawingHero {
   x: number;
   y: number;
+  targetX: number;
+  targetY: number;
   hp: number;
   maxHp: number;
   mana: number;
   maxMana: number;
   frame: number;
-  frameTimer: number;
   attacking: boolean;
   attackTimer: number;
-  attackFrame: number;
-  direction: 1 | -1;
   hitTimer: number;
-  combo: number;
-  exp: number;
+  direction: 1 | -1;
+  image: HTMLImageElement | null;
+  imageWidth: number;
+  imageHeight: number;
+  // Stats from VLM
+  attack: number;
+  defense: number;
+  speed: number;
+  element: string;
+  power: string;
+  characterName: string;
+  characterType: string;
   level: number;
+  exp: number;
+  combo: number;
   skillActive: boolean;
   skillTimer: number;
+  // Visual effects
+  glowIntensity: number;
+  scale: number;
+  bobOffset: number;
 }
 
-export type GameState = 'menu' | 'playing' | 'paused' | 'gameover' | 'victory';
+export type GamePhase = 'menu' | 'scanning' | 'analyzing' | 'awakening' | 'playing' | 'gameover' | 'victory';
 
-export interface GameConfig {
+export interface WaveConfig {
   wave: number;
-  dragonsPerWave: number;
+  monstersPerWave: number;
   score: number;
   highScore: number;
   totalKills: number;
+  monsterTypes: MonsterType[];
 }
 
 export interface FloatingText {
@@ -91,4 +111,20 @@ export interface SkillEffect {
   maxRadius: number;
   life: number;
   color: string;
+}
+
+export interface CharacterAnalysis {
+  characterName: string;
+  characterType: string;
+  description: string;
+  power: string;
+  color1: string;
+  color2: string;
+  stats: {
+    attack: number;
+    defense: number;
+    speed: number;
+    hp: number;
+  };
+  element: string;
 }
