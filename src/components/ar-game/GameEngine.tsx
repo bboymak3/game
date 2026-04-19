@@ -240,31 +240,148 @@ export default function GameEngine() {
   }, []);
 
   // ============================================
-  // SCAN DRAWING (no API call - random character)
+  // EXTRACT DRAWING FROM PAPER (remove background)
+  // ============================================
+  const extractingRef = useRef(false);
+
+  function extractDrawingFromPaper(video: HTMLVideoElement): string {
+    const tmpCanvas = document.createElement('canvas');
+    const PSIZE = 256; // processing size
+    tmpCanvas.width = PSIZE;
+    tmpCanvas.height = PSIZE;
+    const tmpCtx = tmpCanvas.getContext('2d');
+    if (!tmpCtx) return '';
+
+    // Capture center crop and resize
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 480;
+    const cropSize = Math.min(vw, vh) * 0.6;
+    const sx = (vw - cropSize) / 2;
+    const sy = (vh - cropSize) / 2;
+    tmpCtx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, PSIZE, PSIZE);
+
+    const imgData = tmpCtx.getImageData(0, 0, PSIZE, PSIZE);
+    const data = imgData.data;
+
+    // Sample border pixels to find paper/background color
+    let bgR = 0, bgG = 0, bgB = 0, bgCount = 0;
+    const bw = 3; // border width for sampling
+    for (let y = 0; y < PSIZE; y++) {
+      for (let x = 0; x < PSIZE; x++) {
+        const isBorder = x < bw || x >= PSIZE - bw || y < bw || y >= PSIZE - bw;
+        if (isBorder) {
+          const idx = (y * PSIZE + x) * 4;
+          bgR += data[idx];
+          bgG += data[idx + 1];
+          bgB += data[idx + 2];
+          bgCount++;
+        }
+      }
+    }
+    bgR = Math.round(bgR / bgCount);
+    bgG = Math.round(bgG / bgCount);
+    bgB = Math.round(bgB / bgCount);
+
+    // Remove background: make paper pixels transparent
+    const colorThreshold = 45;
+    const saturationThreshold = 35;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const dist = Math.sqrt((r - bgR) ** 2 + (g - bgG) ** 2 + (b - bgB) ** 2);
+      const maxC = Math.max(r, g, b);
+      const minC = Math.min(r, g, b);
+      const saturation = maxC - minC;
+      const brightness = (r + g + b) / 3;
+
+      // If pixel is similar to background AND has low saturation, make transparent
+      if (dist < colorThreshold && saturation < saturationThreshold) {
+        data[i + 3] = 0;
+      }
+      // Also remove very bright pixels (paper glare)
+      else if (brightness > 235 && saturation < 20) {
+        data[i + 3] = 0;
+      }
+    }
+
+    tmpCtx.putImageData(imgData, 0, 0);
+
+    // Find bounding box of non-transparent pixels for tight crop
+    let minX = PSIZE, minY = PSIZE, maxX = 0, maxY = 0;
+    const finalData = tmpCtx.getImageData(0, 0, PSIZE, PSIZE);
+    const fd = finalData.data;
+    for (let y = 0; y < PSIZE; y++) {
+      for (let x = 0; x < PSIZE; x++) {
+        if (fd[(y * PSIZE + x) * 4 + 3] > 10) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    // Add padding and crop tightly around the drawing
+    const pad = 8;
+    minX = Math.max(0, minX - pad);
+    minY = Math.max(0, minY - pad);
+    maxX = Math.min(PSIZE - 1, maxX + pad);
+    maxY = Math.min(PSIZE - 1, maxY + pad);
+
+    const cropW = maxX - minX + 1;
+    const cropH = maxY - minY + 1;
+    if (cropW < 10 || cropH < 10) return ''; // nothing detected
+
+    // Create final output with tight crop
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = cropW;
+    outCanvas.height = cropH;
+    const outCtx = outCanvas.getContext('2d');
+    if (!outCtx) return '';
+    outCtx.drawImage(tmpCanvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+
+    // Return as PNG to preserve transparency
+    return outCanvas.toDataURL('image/png');
+  }
+
+  // ============================================
+  // SCAN DRAWING (extract + random character)
   // ============================================
   const scanDrawing = useCallback(async () => {
     const video = videoRef.current;
-    const canvas = captureCanvasRef.current;
-    if (!video || !canvas) return;
+    if (!video || extractingRef.current) return;
+    extractingRef.current = true;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    try {
+      // Extract drawing from paper (removes background)
+      const extractedDataUrl = extractDrawingFromPaper(video);
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    // Draw center crop (focus on the drawing)
-    const size = Math.min(canvas.width, canvas.height) * 0.6;
-    const sx = (canvas.width - size) / 2;
-    const sy = (canvas.height - size) / 2;
-    ctx.drawImage(video, sx, sy, size, size, 0, 0, size, size);
-
-    const imageData = canvas.toDataURL('image/jpeg', 0.8);
-    setHeroImage(imageData);
-
-    // Generate random character (no API needed!)
-    const character = generateRandomCharacter();
-    beginAwakening(character, imageData);
+      if (!extractedDataUrl) {
+        // Fallback: if extraction fails, use raw capture
+        const canvas = captureCanvasRef.current;
+        if (!canvas) { extractingRef.current = false; return; }
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { extractingRef.current = false; return; }
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        const size = Math.min(canvas.width, canvas.height) * 0.6;
+        const sx = (canvas.width - size) / 2;
+        const sy = (canvas.height - size) / 2;
+        ctx.drawImage(video, sx, sy, size, size, 0, 0, size, size);
+        const fallbackUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setHeroImage(fallbackUrl);
+        const character = generateRandomCharacter();
+        beginAwakening(character, fallbackUrl);
+      } else {
+        // Use extracted drawing (transparent background)
+        setHeroImage(extractedDataUrl);
+        const character = generateRandomCharacter();
+        beginAwakening(character, extractedDataUrl);
+      }
+    } catch (err) {
+      console.error('Scan error:', err);
+    } finally {
+      extractingRef.current = false;
+    }
   }, [beginAwakening]);
 
   // ============================================
