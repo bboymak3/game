@@ -176,41 +176,77 @@ export default function GameEngine() {
   const [dHeroName, setDHeroName] = useState('Dibujo');
 
   // ============================================
-  // CAMERA SETUP
+  // CAMERA - only starts when entering scan phase
   // ============================================
-  useEffect(() => {
-    let cancelled = false;
+  const [cameraError, setCameraError] = useState('');
 
-    async function setupCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
-        if (cancelled) return;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-          cameraReadyRef.current = true;
-          setCameraReady(true);
-        }
-      } catch (_err) {
-        if (cancelled) return;
-        cameraReadyRef.current = false;
-        setCameraReady(false);
-      }
+  const startCamera = useCallback(async () => {
+    // Stop any existing stream first
+    if (videoRef.current?.srcObject) {
+      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+      tracks.forEach(t => t.stop());
+      videoRef.current.srcObject = null;
     }
+    cameraReadyRef.current = false;
+    setCameraReady(false);
+    setCameraError('');
 
-    setupCamera();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      if (!videoRef.current) return;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      cameraReadyRef.current = true;
+      setCameraReady(true);
+    } catch (_err) {
+      cameraReadyRef.current = false;
+      setCameraReady(false);
+      setCameraError('No se pudo acceder a la camara. Verifica los permisos.');
+    }
+  }, []);
 
+  const stopCamera = useCallback(() => {
+    if (videoRef.current?.srcObject) {
+      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+      tracks.forEach(t => t.stop());
+      videoRef.current.srcObject = null;
+    }
+    cameraReadyRef.current = false;
+    setCameraReady(false);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
-      cancelled = true;
       if (videoRef.current?.srcObject) {
         const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
         tracks.forEach(t => t.stop());
       }
     };
   }, []);
+
+  // ============================================
+  // CANVAS RESIZE - responsive to screen size
+  // ============================================
+  const resizeCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+    }
+  }, []);
+
+  useEffect(() => {
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    return () => window.removeEventListener('resize', resizeCanvas);
+  }, [resizeCanvas]);
 
   // ============================================
   // START AWAKENING (shared helper)
@@ -230,14 +266,11 @@ export default function GameEngine() {
     img.src = imageSrc;
 
     // Stop camera to save battery during battle
-    if (videoRef.current?.srcObject) {
-      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-      tracks.forEach(t => t.stop());
-    }
+    stopCamera();
 
     setPhase('awakening');
     awakeningProgressRef.current = 0;
-  }, []);
+  }, [stopCamera]);
 
   // ============================================
   // EXTRACT DRAWING FROM PAPER (remove background)
@@ -394,6 +427,8 @@ export default function GameEngine() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    resizeCanvas();
 
     let running = true;
     const loop = () => {
@@ -970,6 +1005,8 @@ export default function GameEngine() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    resizeCanvas();
+
     let running = true;
     const loop = () => {
       if (!running) return;
@@ -1038,21 +1075,8 @@ export default function GameEngine() {
     setHeroImage(null);
     frameRef.current = 0;
     awakeningProgressRef.current = 0;
-    // Re-start camera for scanning
-    if (videoRef.current) {
-      navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      }).then(stream => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-          cameraReadyRef.current = true;
-          setCameraReady(true);
-        }
-      }).catch(() => setCameraReady(false));
-    }
-  }, []);
+    startCamera();
+  }, [startCamera]);
 
   // Keyboard
   useEffect(() => {
@@ -1083,7 +1107,7 @@ export default function GameEngine() {
   const expNeeded = dLevel * 60;
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-black select-none" style={{ touchAction: 'none' }}>
+    <div className="relative w-full overflow-hidden bg-black select-none" style={{ touchAction: 'none', height: '100dvh' }}>
       {/* Hidden capture canvas */}
       <canvas ref={captureCanvasRef} className="hidden" />
 
@@ -1091,7 +1115,7 @@ export default function GameEngine() {
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover"
-        playsInline muted
+        playsInline muted autoPlay
         style={{ zIndex: 0, display: phase === 'scanning' ? 'block' : 'none' }}
       />
 
@@ -1108,29 +1132,47 @@ export default function GameEngine() {
 
           {/* Instructions */}
           <div className="absolute top-8 left-0 right-0 text-center">
-            <p className="text-white font-bold text-lg" style={{ textShadow: '2px 2px 4px #000' }}>
-              Apunta la camara al dibujo
-            </p>
-            <p className="text-white/70 text-sm mt-1">Coloca el dibujo dentro del recuadro</p>
+            {cameraError ? (
+              <div className="bg-red-900/80 rounded-xl p-4 mx-4">
+                <p className="text-white font-bold text-base">{cameraError}</p>
+                <p className="text-white/70 text-xs mt-1">Usa el modo Demo para jugar sin camara</p>
+              </div>
+            ) : !cameraReady ? (
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 border-3 border-white/40 border-t-white rounded-full animate-spin mb-2" />
+                <p className="text-white font-bold text-lg" style={{ textShadow: '2px 2px 4px #000' }}>
+                  Iniciando camara...
+                </p>
+              </div>
+            ) : (
+              <>
+                <p className="text-white font-bold text-lg" style={{ textShadow: '2px 2px 4px #000' }}>
+                  Apunta la camara al dibujo
+                </p>
+                <p className="text-white/70 text-sm mt-1">Coloca el dibujo dentro del recuadro</p>
+              </>
+            )}
           </div>
 
-          {/* Scan button */}
-          <button
-            onClick={scanDrawing}
-            className="absolute bottom-20 left-1/2 -translate-x-1/2 pointer-events-auto active:scale-90 transition-transform"
-            style={{ zIndex: 5 }}
-          >
-            <div className="w-20 h-20 rounded-full border-4 border-white bg-white/20 backdrop-blur-sm flex items-center justify-center">
-              <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center">
-                <div className="w-14 h-14 rounded-full bg-gradient-to-b from-blue-400 to-blue-600 flex items-center justify-center">
-                  <span className="text-white text-2xl font-bold">SCAN</span>
+          {/* Scan button - only show when camera is ready */}
+          {cameraReady && (
+            <button
+              onClick={scanDrawing}
+              className="absolute bottom-20 left-1/2 -translate-x-1/2 pointer-events-auto active:scale-90 transition-transform"
+              style={{ zIndex: 5 }}
+            >
+              <div className="w-20 h-20 rounded-full border-4 border-white bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center">
+                  <div className="w-14 h-14 rounded-full bg-gradient-to-b from-blue-400 to-blue-600 flex items-center justify-center">
+                    <span className="text-white text-2xl font-bold">SCAN</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          </button>
+            </button>
+          )}
 
           <button
-            onClick={() => setPhase('menu')}
+            onClick={() => { stopCamera(); setPhase('menu'); }}
             className="absolute bottom-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg px-4 py-2 pointer-events-auto active:scale-95 transition-transform"
             style={{ zIndex: 5 }}
           >
@@ -1143,8 +1185,6 @@ export default function GameEngine() {
       {(phase === 'awakening' || phase === 'playing' || phase === 'gameover' || phase === 'victory') && (
         <canvas
           ref={canvasRef}
-          width={640}
-          height={480}
           className="absolute inset-0 w-full h-full"
           style={{ zIndex: 1 }}
           onTouchStart={(e) => { e.preventDefault(); handleTap(e); }}
