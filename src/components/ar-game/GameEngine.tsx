@@ -644,8 +644,14 @@ export default function GameEngine() {
 
     const rect = canvas.getBoundingClientRect();
     let cx: number, cy: number;
-    if ('touches' in e) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
-    else { cx = e.clientX; cy = e.clientY; }
+    if ('touches' in e) {
+      // touchEnd uses changedTouches
+      const touchList = e.changedTouches || e.touches;
+      if (touchList && touchList.length > 0) {
+        cx = touchList[0].clientX;
+        cy = touchList[0].clientY;
+      }
+    } else { cx = e.clientX; cy = e.clientY; }
 
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -1107,7 +1113,7 @@ export default function GameEngine() {
   const expNeeded = dLevel * 60;
 
   return (
-    <div className="relative w-full overflow-hidden bg-black select-none" style={{ touchAction: 'none', height: '100dvh' }}>
+    <div className="relative w-full overflow-hidden bg-black select-none" style={{ touchAction: 'none', height: '100vh', maxHeight: '100dvh', WebkitOverflowScrolling: 'touch' }}>
       {/* Hidden capture canvas */}
       <canvas ref={captureCanvasRef} className="hidden" />
 
@@ -1115,7 +1121,7 @@ export default function GameEngine() {
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover"
-        playsInline muted autoPlay
+        playsInline muted
         style={{ zIndex: 0, display: phase === 'scanning' ? 'block' : 'none' }}
       />
 
@@ -1187,7 +1193,7 @@ export default function GameEngine() {
           ref={canvasRef}
           className="absolute inset-0 w-full h-full"
           style={{ zIndex: 1 }}
-          onTouchStart={(e) => { e.preventDefault(); handleTap(e); }}
+          onTouchEnd={(e) => { handleTap(e); }}
           onClick={handleTap}
         />
       )}

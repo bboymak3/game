@@ -1,15 +1,15 @@
 {
-  "name": "Dragon Quest AR",
-  "short_name": "DragonQuest",
-  "description": "Juego AR pixel art de combate con dragones estilo MapleStory",
+  "name": "Dibujo Warrior AR",
+  "short_name": "DibujoWar",
+  "description": "Tu dibujo cobra vida y pelea contra monstruos!",
   "start_url": "/",
-  "display": "fullscreen",
+  "display": "standalone",
   "orientation": "portrait",
   "background_color": "#1a1a2e",
   "theme_color": "#1a1a2e",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐉</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>",
       "sizes": "any",
       "type": "image/svg+xml"
     }
