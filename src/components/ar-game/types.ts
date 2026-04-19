@@ -83,7 +83,7 @@ export interface DrawingHero {
   bobOffset: number;
 }
 
-export type GamePhase = 'menu' | 'scanning' | 'analyzing' | 'awakening' | 'playing' | 'gameover' | 'victory';
+export type GamePhase = 'menu' | 'scanning' | 'awakening' | 'playing' | 'gameover' | 'victory' | 'paused';
 
 export interface WaveConfig {
   wave: number;

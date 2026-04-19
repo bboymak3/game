@@ -5,6 +5,68 @@ import type { Monster, MonsterType, DrawingHero, DamageNumber, Particle, Floatin
 import { drawSlime, drawGhost, drawBat, drawSkeleton, drawBoss, drawDrawingHero, drawAwakeningEffect, drawHealthBar } from './PixelSprites';
 
 // ============================================
+// RANDOM CHARACTER GENERATOR (offline/static)
+// ============================================
+const HERO_NAMES = [
+  'Sparkle Knight', 'Thunder Paws', 'Shadow Fox', 'Cosmic Tiger', 'Blaze Unicorn',
+  'Storm Eagle', 'Crystal Wolf', 'Nova Dragon', 'Pixel Warrior', 'Star Knight',
+  'Frost Bear', 'Ember Cat', 'Galaxy Frog', 'Neon Shark', 'Dream Owl',
+  'Lightning Bunny', 'Sapphire Lion', 'Ruby Phoenix', 'Turbo Snail', 'Mystic Panda',
+  'Super Chango', 'Rocket Llama', 'Captain Gato', 'Zap Dino', 'Glow Worm',
+  'Iron Butterfly', 'Steel Duck', 'Mega Turtle', 'Ultra Sloth', 'Power Penguin',
+];
+
+const HERO_TYPES = ['guerrero', 'mago', 'tanque', 'asassino'];
+const HERO_ELEMENTS = ['fuego', 'agua', 'rayo', 'hielo', 'naturaleza', 'luz', 'oscuridad', 'viento'];
+const HERO_POWERS = [
+  'Golpe Explosivo', 'Tormenta Electrica', 'Llamarada Infernal', 'Escudo de Cristal',
+  'Tajo Hurricane', 'Impacto Cosmico', 'Onda de Choque', 'Puño de Trueno',
+  'Rayo Laser', 'Bola de Fuego', 'Tornado Furioso', 'Explosion Solar',
+  'Avalancha Glacial', 'Terremoto', 'Corte Dimensional', 'Flecha Fantasma',
+];
+
+const HERO_COLORS: [string, string][] = [
+  ['#FF6B6B', '#EE5A24'], ['#00E5FF', '#00BCD4'], ['#FFD740', '#FFC107'],
+  ['#69F0AE', '#00C853'], ['#FF4081', '#F50057'], ['#7C4DFF', '#651FFF'],
+  ['#FF6E40', '#FF3D00'], ['#40C4FF', '#0091EA'], ['#FFAB40', '#FF6D00'],
+  ['#B2FF59', '#64DD17'], ['#E040FB', '#AA00FF'], ['#18FFFF', '#00E5FF'],
+];
+
+const HERO_DESCRIPTIONS = [
+  'Un dibujo valiente que cobra vida con poderes magicos',
+  'Un guerrero nacido del papel con corazon de dragon',
+  'Un heroe legendario que salta desde tu dibujo',
+  'Un campeon animado con una mision de destruccion',
+  'Un protector de mundos creado con colores y amor',
+  'Un guardian invencible forjado con imaginacion pura',
+];
+
+function generateRandomCharacter(): CharacterAnalysis {
+  const name = HERO_NAMES[Math.floor(Math.random() * HERO_NAMES.length)];
+  const type = HERO_TYPES[Math.floor(Math.random() * HERO_TYPES.length)];
+  const element = HERO_ELEMENTS[Math.floor(Math.random() * HERO_ELEMENTS.length)];
+  const power = HERO_POWERS[Math.floor(Math.random() * HERO_POWERS.length)];
+  const [color1, color2] = HERO_COLORS[Math.floor(Math.random() * HERO_COLORS.length)];
+  const desc = HERO_DESCRIPTIONS[Math.floor(Math.random() * HERO_DESCRIPTIONS.length)];
+
+  const baseAttack = 8 + Math.floor(Math.random() * 10);
+  const baseDefense = 3 + Math.floor(Math.random() * 8);
+  const baseSpeed = 3 + Math.floor(Math.random() * 6);
+  const baseHp = 80 + Math.floor(Math.random() * 60);
+
+  return {
+    characterName: name,
+    characterType: type,
+    description: desc,
+    power,
+    color1,
+    color2,
+    stats: { attack: baseAttack, defense: baseDefense, speed: baseSpeed, hp: baseHp },
+    element,
+  };
+}
+
+// ============================================
 // CONSTANTS
 // ============================================
 const MONSTER_STATS: Record<MonsterType, { hp: number; speed: number; damage: number; size: number }> = {
@@ -61,6 +123,20 @@ function createDrawingHero(analysis: CharacterAnalysis | null, image: HTMLImageE
   };
 }
 
+// Helper to apply character info to hero ref
+function applyCharacterInfo(heroRef: React.MutableRefObject<DrawingHero>, info: CharacterAnalysis) {
+  const h = heroRef.current;
+  h.attack = info.stats?.attack || 10;
+  h.defense = info.stats?.defense || 5;
+  h.speed = (info.stats?.speed || 3) * 0.8;
+  h.hp = info.stats?.hp || 100;
+  h.maxHp = info.stats?.hp || 100;
+  h.power = info.power || 'Golpe';
+  h.element = info.element || 'naturaleza';
+  h.characterName = info.characterName || 'Dibujo';
+  h.characterType = info.characterType || 'guerrero';
+}
+
 export default function GameEngine() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -82,7 +158,6 @@ export default function GameEngine() {
 
   const [phase, setPhase] = useState<GamePhase>('menu');
   const [cameraReady, setCameraReady] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
   const [characterInfo, setCharacterInfo] = useState<CharacterAnalysis | null>(null);
   const [heroImage, setHeroImage] = useState<string | null>(null);
 
@@ -138,7 +213,34 @@ export default function GameEngine() {
   }, []);
 
   // ============================================
-  // SCAN DRAWING
+  // START AWAKENING (shared helper)
+  // ============================================
+  const beginAwakening = useCallback((info: CharacterAnalysis, imageSrc: string) => {
+    setCharacterInfo(info);
+    setDHeroName(info.characterName || 'Dibujo');
+    applyCharacterInfo(heroRef, info);
+
+    // Load image as hero sprite
+    const img = new Image();
+    img.onload = () => {
+      heroRef.current.image = img;
+      heroRef.current.imageWidth = img.width;
+      heroRef.current.imageHeight = img.height;
+    };
+    img.src = imageSrc;
+
+    // Stop camera to save battery during battle
+    if (videoRef.current?.srcObject) {
+      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+      tracks.forEach(t => t.stop());
+    }
+
+    setPhase('awakening');
+    awakeningProgressRef.current = 0;
+  }, []);
+
+  // ============================================
+  // SCAN DRAWING (no API call - random character)
   // ============================================
   const scanDrawing = useCallback(async () => {
     const video = videoRef.current;
@@ -159,90 +261,11 @@ export default function GameEngine() {
 
     const imageData = canvas.toDataURL('image/jpeg', 0.8);
     setHeroImage(imageData);
-    setPhase('analyzing');
-    setAnalyzing(true);
 
-    // Send to VLM API - use canvas.toBlob for proper JPEG encoding
-    const formData = new FormData();
-    const jpegBlob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/jpeg', 0.8)
-    );
-    if (jpegBlob) formData.append('drawing', jpegBlob, 'drawing.jpg');
-
-    // Helper: start the game with given character data
-    const startAwakening = (info: CharacterAnalysis) => {
-      setCharacterInfo(info);
-      setDHeroName(info.characterName || 'Dibujo');
-      const h = heroRef.current;
-      h.attack = info.stats?.attack || 10;
-      h.defense = info.stats?.defense || 5;
-      h.speed = (info.stats?.speed || 3) * 0.8;
-      h.hp = info.stats?.hp || 100;
-      h.maxHp = info.stats?.hp || 100;
-      h.power = info.power || 'Golpe';
-      h.element = info.element || 'naturaleza';
-      h.characterName = info.characterName || 'Dibujo';
-      h.characterType = info.characterType || 'guerrero';
-      // Stop camera to save battery during battle
-      if (videoRef.current?.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(t => t.stop());
-      }
-      setPhase('awakening');
-      awakeningProgressRef.current = 0;
-    };
-
-    const fallbackInfo: CharacterAnalysis = {
-      characterName: 'Guerrero Dibujo',
-      characterType: 'guerrero',
-      description: 'Un valiente dibujo que cobra vida',
-      power: 'Golpe Magico',
-      color1: '#00E5FF',
-      color2: '#00BCD4',
-      stats: { attack: 10, defense: 5, speed: 5, hp: 100 },
-      element: 'luz',
-    };
-
-    // Load scanned image as hero sprite
-    const img = new Image();
-    img.onload = () => {
-      heroRef.current.image = img;
-      heroRef.current.imageWidth = img.width;
-      heroRef.current.imageHeight = img.height;
-    };
-    img.src = imageData;
-
-    // 30-second timeout for VLM API
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-    fetch('/api/analyze-drawing', {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal,
-    })
-      .then(res => {
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        return res.json();
-      })
-      .then(data => {
-        if (data.success && data.analysis) {
-          startAwakening(data.analysis);
-        } else {
-          // API returned non-success JSON - use fallback
-          console.warn('VLM returned non-success:', data);
-          startAwakening(fallbackInfo);
-        }
-      })
-      .catch((err) => {
-        console.warn('VLM analysis failed, using fallback:', err);
-        startAwakening(fallbackInfo);
-      })
-      .finally(() => {
-        clearTimeout(timeoutId);
-        setAnalyzing(false);
-      });
-  }, []);
+    // Generate random character (no API needed!)
+    const character = generateRandomCharacter();
+    beginAwakening(character, imageData);
+  }, [beginAwakening]);
 
   // ============================================
   // AWAKENING ANIMATION
@@ -841,12 +864,12 @@ export default function GameEngine() {
   }, [phase]);
 
   // ============================================
-  // DEMO FALLBACK - Default character if VLM fails
+  // DEMO FALLBACK - Pre-defined character
   // ============================================
   const startDemoFallback = useCallback(() => {
-    const drawingUrl = '/api/demo-drawing';
+    const drawingUrl = '/demo-drawing.jpg';
     setHeroImage(drawingUrl);
-    setCharacterInfo({
+    const info: CharacterAnalysis = {
       characterName: 'Blob Warrior',
       characterType: 'guerrero',
       description: 'Un valiente dibujo blob que cobra vida',
@@ -855,88 +878,19 @@ export default function GameEngine() {
       color2: '#00BCD4',
       stats: { attack: 12, defense: 6, speed: 7, hp: 120 },
       element: 'luz',
-    });
-    setDHeroName('Blob Warrior');
-
-    const img = new Image();
-    img.onload = () => {
-      heroRef.current.image = img;
-      heroRef.current.imageWidth = img.width;
-      heroRef.current.imageHeight = img.height;
     };
-    img.src = drawingUrl;
-
-    const h = heroRef.current;
-    h.attack = 12; h.defense = 6; h.speed = 5.6;
-    h.hp = 120; h.maxHp = 120;
-    h.power = 'Choque Cosmico'; h.element = 'luz';
-    h.characterName = 'Blob Warrior'; h.characterType = 'guerrero';
-
-    setPhase('awakening');
-    awakeningProgressRef.current = 0;
-  }, []);
+    beginAwakening(info, drawingUrl);
+  }, [beginAwakening]);
 
   // ============================================
-  // DEMO MODE - Load child's drawing and analyze with VLM
+  // DEMO MODE - Uses demo-drawing.jpg + random character
   // ============================================
   const startDemoMode = useCallback(() => {
-    // Use the uploaded child's drawing from the upload folder
-    setPhase('analyzing');
-    setAnalyzing(true);
-
-    // Load the child's drawing that was uploaded
-    const drawingUrl = '/api/demo-drawing';
+    const drawingUrl = '/demo-drawing.jpg';
     setHeroImage(drawingUrl);
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      heroRef.current.image = img;
-      heroRef.current.imageWidth = img.width;
-      heroRef.current.imageHeight = img.height;
-    };
-    img.src = drawingUrl;
-
-    // 30-second timeout for VLM API
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-    // Send to VLM API
-    fetch('/api/analyze-drawing-demo', { signal: controller.signal })
-      .then(res => {
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        return res.json();
-      })
-      .then(data => {
-        if (data.success && data.analysis) {
-          setCharacterInfo(data.analysis);
-          setDHeroName(data.analysis.characterName || 'Guerrero Dibujo');
-          const h = heroRef.current;
-          h.attack = data.analysis.stats?.attack || 10;
-          h.defense = data.analysis.stats?.defense || 5;
-          h.speed = (data.analysis.stats?.speed || 3) * 0.8;
-          h.hp = data.analysis.stats?.hp || 100;
-          h.maxHp = data.analysis.stats?.hp || 100;
-          h.power = data.analysis.power || 'Golpe';
-          h.element = data.analysis.element || 'naturaleza';
-          h.characterName = data.analysis.characterName || 'Guerrero Dibujo';
-          h.characterType = data.analysis.characterType || 'guerrero';
-          setPhase('awakening');
-          awakeningProgressRef.current = 0;
-        } else {
-          console.warn('Demo VLM returned non-success:', data);
-          startDemoFallback();
-        }
-      })
-      .catch((err) => {
-        console.warn('Demo VLM failed, using fallback:', err);
-        startDemoFallback();
-      })
-      .finally(() => {
-        clearTimeout(timeoutId);
-        setAnalyzing(false);
-      });
-  }, []);
+    const character = generateRandomCharacter();
+    beginAwakening(character, drawingUrl);
+  }, [beginAwakening]);
 
   // ============================================
   // START / RESTART
@@ -1068,24 +1022,6 @@ export default function GameEngine() {
         </div>
       )}
 
-      {/* Analyzing overlay */}
-      {phase === 'analyzing' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80" style={{ zIndex: 10 }}>
-          <div className="text-center px-6">
-            <div className="relative w-24 h-24 mx-auto mb-6">
-              <div className="absolute inset-0 border-4 border-yellow-400/30 rounded-full" />
-              <div className="absolute inset-0 border-4 border-transparent border-t-yellow-400 rounded-full animate-spin" />
-              <div className="absolute inset-3 border-4 border-transparent border-t-cyan-400 rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '0.8s' }} />
-              {heroImage && (
-                <img src={heroImage} alt="scan" className="absolute inset-4 object-contain rounded animate-pulse" />
-              )}
-            </div>
-            <p className="text-yellow-400 font-bold text-xl animate-pulse">Analizando dibujo...</p>
-            <p className="text-white/60 text-sm mt-2">El dibujo esta cobrando vida</p>
-          </div>
-        </div>
-      )}
-
       {/* Game canvas (awakening + playing) */}
       {(phase === 'awakening' || phase === 'playing' || phase === 'gameover' || phase === 'victory') && (
         <canvas
@@ -1187,7 +1123,7 @@ export default function GameEngine() {
 
             <div className="space-y-2 mb-8 text-left bg-black/40 rounded-xl p-4">
               <p className="text-white/80 text-sm">1. Escanea un dibujo con la camara</p>
-              <p className="text-white/80 text-sm">2. La IA le da poderes al dibujo</p>
+              <p className="text-white/80 text-sm">2. Se generan poderes al azar</p>
               <p className="text-white/80 text-sm">3. El dibujo cobra vida como guerrero</p>
               <p className="text-white/80 text-sm">4. Monstruos aparecen en la habitacion</p>
               <p className="text-white/80 text-sm">5. Toca los monstruos para pelear</p>
@@ -1198,7 +1134,7 @@ export default function GameEngine() {
               ESCANEAR DIBUJO
             </button>
 
-            {/* Demo mode - uses child's uploaded drawing directly */}
+            {/* Demo mode - uses demo drawing + random character */}
             <button onClick={startDemoMode}
               className="block w-full mt-3 bg-gradient-to-b from-purple-500 to-pink-600 text-white font-bold text-base px-8 py-3 rounded-xl active:scale-95 transition-transform pointer-events-auto">
               MODO DEMO (Dibujo del Nino)
@@ -1255,7 +1191,7 @@ export default function GameEngine() {
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm" style={{ zIndex: 10 }}>
           <div className="text-center px-6 max-w-sm">
             <h2 className="text-5xl font-black text-yellow-400 mb-4">VICTORIA!</h2>
-            <p className="text-white text-lg mb-4">Tu dibujo derrotó a todos los monstruos!</p>
+            <p className="text-white text-lg mb-4">Tu dibujo derroto a todos los monstruos!</p>
             <div className="bg-black/60 backdrop-blur-sm rounded-xl p-4 mb-6 space-y-2">
               <p className="text-yellow-400 font-bold text-2xl">Puntos: {dScore}</p>
               <p className="text-white/80">Monstruos derrotados: {dKills}</p>
