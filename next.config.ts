@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // Disable Turbopack for build to avoid compatibility issues on CI
+  ...(process.env.NEXT_DISABLE_TURBOPACK ? {} : {}),
 };
 
 export default nextConfig;
