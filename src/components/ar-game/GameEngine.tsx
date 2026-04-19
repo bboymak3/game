@@ -140,7 +140,7 @@ export default function GameEngine() {
   // ============================================
   // SCAN DRAWING
   // ============================================
-  const scanDrawing = useCallback(() => {
+  const scanDrawing = useCallback(async () => {
     const video = videoRef.current;
     const canvas = captureCanvasRef.current;
     if (!video || !canvas) return;
@@ -162,76 +162,86 @@ export default function GameEngine() {
     setPhase('analyzing');
     setAnalyzing(true);
 
-    // Send to VLM API
+    // Send to VLM API - use canvas.toBlob for proper JPEG encoding
     const formData = new FormData();
-    const blob = new Blob([ctx.getImageData(0, 0, size, size).data.buffer], { type: 'image/jpeg' });
-    formData.append('drawing', blob, 'drawing.jpg');
+    const jpegBlob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', 0.8)
+    );
+    if (jpegBlob) formData.append('drawing', jpegBlob, 'drawing.jpg');
+
+    // Helper: start the game with given character data
+    const startAwakening = (info: CharacterAnalysis) => {
+      setCharacterInfo(info);
+      setDHeroName(info.characterName || 'Dibujo');
+      const h = heroRef.current;
+      h.attack = info.stats?.attack || 10;
+      h.defense = info.stats?.defense || 5;
+      h.speed = (info.stats?.speed || 3) * 0.8;
+      h.hp = info.stats?.hp || 100;
+      h.maxHp = info.stats?.hp || 100;
+      h.power = info.power || 'Golpe';
+      h.element = info.element || 'naturaleza';
+      h.characterName = info.characterName || 'Dibujo';
+      h.characterType = info.characterType || 'guerrero';
+      // Stop camera to save battery during battle
+      if (videoRef.current?.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+        tracks.forEach(t => t.stop());
+      }
+      setPhase('awakening');
+      awakeningProgressRef.current = 0;
+    };
+
+    const fallbackInfo: CharacterAnalysis = {
+      characterName: 'Guerrero Dibujo',
+      characterType: 'guerrero',
+      description: 'Un valiente dibujo que cobra vida',
+      power: 'Golpe Magico',
+      color1: '#00E5FF',
+      color2: '#00BCD4',
+      stats: { attack: 10, defense: 5, speed: 5, hp: 100 },
+      element: 'luz',
+    };
+
+    // Load scanned image as hero sprite
+    const img = new Image();
+    img.onload = () => {
+      heroRef.current.image = img;
+      heroRef.current.imageWidth = img.width;
+      heroRef.current.imageHeight = img.height;
+    };
+    img.src = imageData;
+
+    // 30-second timeout for VLM API
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     fetch('/api/analyze-drawing', {
       method: 'POST',
       body: formData,
+      signal: controller.signal,
     })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`API error: ${res.status}`);
+        return res.json();
+      })
       .then(data => {
         if (data.success && data.analysis) {
-          setCharacterInfo(data.analysis);
-          setDHeroName(data.analysis.characterName || 'Dibujo');
-
-          // Load image as hero
-          const img = new Image();
-          img.onload = () => {
-            heroRef.current.image = img;
-            heroRef.current.imageWidth = img.width;
-            heroRef.current.imageHeight = img.height;
-          };
-          img.src = imageData;
-
-          // Set hero stats from VLM analysis
-          const h = heroRef.current;
-          h.attack = data.analysis.stats?.attack || 10;
-          h.defense = data.analysis.stats?.defense || 5;
-          h.speed = (data.analysis.stats?.speed || 3) * 0.8;
-          h.hp = data.analysis.stats?.hp || 100;
-          h.maxHp = data.analysis.stats?.hp || 100;
-          h.power = data.analysis.power || 'Golpe';
-          h.element = data.analysis.element || 'naturaleza';
-          h.characterName = data.analysis.characterName || 'Dibujo';
-          h.characterType = data.analysis.characterType || 'guerrero';
-
-          // Stop camera to save battery during battle
-          if (videoRef.current?.srcObject) {
-            const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-            tracks.forEach(t => t.stop());
-          }
-
-          // Start awakening animation
-          setPhase('awakening');
-          awakeningProgressRef.current = 0;
+          startAwakening(data.analysis);
+        } else {
+          // API returned non-success JSON - use fallback
+          console.warn('VLM returned non-success:', data);
+          startAwakening(fallbackInfo);
         }
       })
-      .catch(() => {
-        // Fallback: use image without analysis
-        const img = new Image();
-        img.onload = () => {
-          heroRef.current.image = img;
-          heroRef.current.imageWidth = img.width;
-          heroRef.current.imageHeight = img.height;
-        };
-        img.src = imageData;
-        setCharacterInfo({
-          characterName: 'Guerrero Dibujo',
-          characterType: 'guerrero',
-          description: 'Un valiente dibujo que cobra vida',
-          power: 'Golpe Magico',
-          color1: '#00E5FF',
-          color2: '#00BCD4',
-          stats: { attack: 10, defense: 5, speed: 5, hp: 100 },
-          element: 'luz',
-        });
-        setPhase('awakening');
-        awakeningProgressRef.current = 0;
+      .catch((err) => {
+        console.warn('VLM analysis failed, using fallback:', err);
+        startAwakening(fallbackInfo);
       })
-      .finally(() => setAnalyzing(false));
+      .finally(() => {
+        clearTimeout(timeoutId);
+        setAnalyzing(false);
+      });
   }, []);
 
   // ============================================
@@ -748,8 +758,13 @@ export default function GameEngine() {
       }
     });
 
-    // Hero
-    drawDrawingHero(ctx, hero);
+    // Hero - pass characterInfo color1 for glow effect
+    drawDrawingHero(ctx, {
+      ...hero,
+      color1: characterInfo?.color1 || '#00E5FF',
+      skillActive: hero.skillActive,
+      level: hero.level,
+    });
 
     // Particles
     particlesRef.current.forEach(p => {
@@ -873,23 +888,29 @@ export default function GameEngine() {
     const drawingUrl = '/api/demo-drawing';
     setHeroImage(drawingUrl);
 
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      heroRef.current.image = img;
+      heroRef.current.imageWidth = img.width;
+      heroRef.current.imageHeight = img.height;
+    };
+    img.src = drawingUrl;
+
+    // 30-second timeout for VLM API
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
     // Send to VLM API
-    fetch('/api/analyze-drawing-demo')
-      .then(res => res.json())
+    fetch('/api/analyze-drawing-demo', { signal: controller.signal })
+      .then(res => {
+        if (!res.ok) throw new Error(`API error: ${res.status}`);
+        return res.json();
+      })
       .then(data => {
         if (data.success && data.analysis) {
           setCharacterInfo(data.analysis);
           setDHeroName(data.analysis.characterName || 'Guerrero Dibujo');
-
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => {
-            heroRef.current.image = img;
-            heroRef.current.imageWidth = img.width;
-            heroRef.current.imageHeight = img.height;
-          };
-          img.src = drawingUrl;
-
           const h = heroRef.current;
           h.attack = data.analysis.stats?.attack || 10;
           h.defense = data.analysis.stats?.defense || 5;
@@ -900,18 +921,21 @@ export default function GameEngine() {
           h.element = data.analysis.element || 'naturaleza';
           h.characterName = data.analysis.characterName || 'Guerrero Dibujo';
           h.characterType = data.analysis.characterType || 'guerrero';
-
           setPhase('awakening');
           awakeningProgressRef.current = 0;
         } else {
-          // Fallback with default character
+          console.warn('Demo VLM returned non-success:', data);
           startDemoFallback();
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn('Demo VLM failed, using fallback:', err);
         startDemoFallback();
       })
-      .finally(() => setAnalyzing(false));
+      .finally(() => {
+        clearTimeout(timeoutId);
+        setAnalyzing(false);
+      });
   }, []);
 
   // ============================================
