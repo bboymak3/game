@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111827">
+<title>Dibujo Warrior</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;overflow:hidden;background:#111827;font-family:Arial,sans-serif;color:#fff;touch-action:none;user-select:none;-webkit-user-select:none}
+#app{width:100%;height:100%;position:relative}
+
+/* SCREENS */
+.screen{display:none;position:absolute;top:0;left:0;width:100%;height:100%;flex-direction:column;align-items:center;justify-content:center}
+.screen.active{display:flex}
+
+/* MENU */
+#menu{text-align:center;padding:20px;background:linear-gradient(180deg,#111827 0%,#1e1b4b 100%)}
+#menu h1{font-size:2rem;font-weight:900;margin-bottom:4px;text-shadow:0 0 20px rgba(59,130,246,0.5)}
+#menu h2{font-size:1rem;color:#60a5fa;margin-bottom:20px}
+#menu .emoji{font-size:4rem;margin-bottom:12px}
+.btn{display:block;width:260px;max-width:80vw;padding:14px 20px;margin:8px auto;border:none;border-radius:12px;font-size:1.1rem;font-weight:700;cursor:pointer;transition:transform 0.1s}
+.btn:active{transform:scale(0.95)}
+.btn-primary{background:linear-gradient(180deg,#fbbf24,#f59e0b);color:#000}
+.btn-secondary{background:linear-gradient(180deg,#8b5cf6,#7c3aed);color:#fff}
+
+/* CAMERA */
+#cam-screen{background:#000}
+#video{width:100%;height:100%;object-fit:cover}
+#cam-ui{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:env(safe-area-inset-top,10px) 16px env(safe-area-inset-bottom,10px)}
+.cam-top{padding:12px;text-align:center}
+.cam-top h3{text-shadow:0 2px 8px rgba(0,0,0,0.8);font-size:1.1rem}
+.cam-top p{font-size:0.85rem;color:rgba(255,255,255,0.7);margin-top:4px}
+.cam-mid{flex:1;pointer-events:none}
+.guide{width:240px;height:240px;border:2px solid rgba(255,255,255,0.5);border-radius:16px;position:relative}
+.guide::before,.guide::after{content:'';position:absolute;width:24px;height:24px;border-color:#fbbf24;border-style:solid}
+.guide::before{top:-2px;left:-2px;border-width:4px 0 0 4px;border-radius:12px 0 0 0}
+.guide::after{bottom:-2px;right:-2px;border-width:0 4px 4px 0;border-radius:0 0 12px 0}
+.cam-bottom{padding:12px;display:flex;gap:12px;align-items:center}
+.btn-capture{width:70px;height:70px;border-radius:50%;border:4px solid #fff;background:rgba(255,255,255,0.2);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.btn-capture:active{transform:scale(0.9)}
+.btn-capture-inner{width:56px;height:56px;border-radius:50%;background:#fff}
+.btn-back{background:rgba(0,0,0,0.5);color:#fff;border:none;padding:10px 18px;border-radius:8px;font-size:0.9rem;font-weight:600;cursor:pointer}
+
+/* LOADING */
+#loading{background:linear-gradient(180deg,#111827,#1e1b4b);text-align:center}
+.loader{width:48px;height:48px;border:4px solid rgba(255,255,255,0.2);border-top-color:#60a5fa;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loading p{font-size:1.1rem;color:#93c5fd}
+
+/* CHARACTER */
+#char-screen{background:linear-gradient(180deg,#0f172a,#1e1b4b);text-align:center;padding:20px}
+.char-card{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:20px;max-width:320px;width:80vw;margin-bottom:16px}
+.char-avatar{width:180px;height:180px;margin:0 auto 16px;border-radius:16px;overflow:hidden;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center}
+.char-avatar canvas{max-width:100%;max-height:100%}
+.char-name{font-size:1.5rem;font-weight:900;color:#fbbf24;margin-bottom:4px}
+.char-type{font-size:0.85rem;color:#60a5fa;margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:left;margin-bottom:12px}
+.stat{background:rgba(0,0,0,0.3);padding:8px 12px;border-radius:8px}
+.stat-label{font-size:0.7rem;color:rgba(255,255,255,0.5);text-transform:uppercase}
+.stat-val{font-size:1.1rem;font-weight:700}
+.stat-atk .stat-val{color:#f87171}
+.stat-def .stat-val{color:#60a5fa}
+.stat-spd .stat-val{color:#34d399}
+.stat-hp .stat-val{color:#fbbf24}
+.char-power{background:linear-gradient(90deg,rgba(139,92,246,0.2),rgba(236,72,153,0.2));padding:8px 16px;border-radius:8px;margin-bottom:8px}
+.char-power span{color:#c084fc;font-weight:700}
+.char-elem{font-size:0.8rem;color:rgba(255,255,255,0.6);margin-bottom:16px}
+.btn-scan{background:linear-gradient(180deg,#fbbf24,#f59e0b);color:#000;font-size:1rem;padding:12px 24px;border:none;border-radius:12px;font-weight:700;cursor:pointer;width:100%;max-width:260px}
+.btn-scan:active{transform:scale(0.95)}
+.btn-new{background:transparent;color:rgba(255,255,255,0.6);border:1px solid rgba(255,255,255,0.2);font-size:0.85rem;padding:10px 20px;border-radius:10px;cursor:pointer;width:100%;max-width:260px;margin-top:8px}
+.btn-new:active{transform:scale(0.95)}
+
+/* ERROR */
+#error-msg{display:none;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(239,68,68,0.9);color:#fff;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;z-index:100;white-space:nowrap}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- MENU -->
+  <div id="menu" class="screen active">
+    <div class="emoji">&#9999;&#65039;</div>
+    <h1>DIBUJO WARRIOR</h1>
+    <h2>Realidad Aumentada</h2>
+    <p style="color:rgba(255,255,255,0.5);font-size:0.85rem;margin-bottom:28px">Tu dibujo cobra vida como guerrero</p>
+    <button class="btn btn-primary" onclick="openCamera()">ESCANEAR DIBUJO</button>
+    <button class="btn btn-secondary" onclick="demoMode()">MODO DEMO</button>
+  </div>
+
+  <!-- CAMERA -->
+  <div id="cam-screen" class="screen">
+    <video id="video" playsinline muted></video>
+    <div id="cam-ui">
+      <div class="cam-top">
+        <h3>Apunta al dibujo</h3>
+        <p>Coloca el dibujo dentro del recuadro</p>
+      </div>
+      <div class="cam-mid" style="display:flex;align-items:center;justify-content:center">
+        <div class="guide"></div>
+      </div>
+      <div class="cam-bottom">
+        <button class="btn-back" onclick="closeCamera()">Atras</button>
+        <button class="btn-capture" onclick="captureDrawing()">
+          <div class="btn-capture-inner"></div>
+        </button>
+        <div style="width:70px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOADING -->
+  <div id="loading" class="screen">
+    <div class="loader"></div>
+    <p id="load-text">Procesando dibujo...</p>
+  </div>
+
+  <!-- CHARACTER -->
+  <div id="char-screen" class="screen">
+    <div style="max-width:320px;width:80vw">
+      <div class="char-card">
+        <div class="char-avatar" id="avatar-box">
+          <canvas id="avatar-canvas" width="180" height="180"></canvas>
+        </div>
+        <div class="char-name" id="char-name">Cargando...</div>
+        <div class="char-type" id="char-type">---</div>
+        <div class="stats">
+          <div class="stat stat-atk"><div class="stat-label">Ataque</div><div class="stat-val" id="s-atk">0</div></div>
+          <div class="stat stat-def"><div class="stat-label">Defensa</div><div class="stat-val" id="s-def">0</div></div>
+          <div class="stat stat-spd"><div class="stat-label">Velocidad</div><div class="stat-val" id="s-spd">0</div></div>
+          <div class="stat stat-hp"><div class="stat-label">Vida</div><div class="stat-val" id="s-hp">0</div></div>
+        </div>
+        <div class="char-power">Poder: <span id="char-power">---</span></div>
+        <div class="char-elem" id="char-elem">Elemento: ---</div>
+      </div>
+      <button class="btn-scan" onclick="openCamera()">ESCANEAR OTRO</button>
+      <button class="btn-new" onclick="goMenu()">MENU</button>
+    </div>
+  </div>
+
+  <div id="error-msg"></div>
+</div>
+
+<script>
+// ============ STATE ============
+let stream = null;
+let characterData = null;
+
+// ============ NAMES & DATA ============
+const NAMES = [
+  'Sparkle Knight','Thunder Paws','Shadow Fox','Cosmic Tiger','Blaze Unicorn',
+  'Storm Eagle','Crystal Wolf','Nova Dragon','Pixel Warrior','Star Knight',
+  'Frost Bear','Ember Cat','Galaxy Frog','Neon Shark','Dream Owl',
+  'Lightning Bunny','Sapphire Lion','Ruby Phoenix','Turbo Snail','Mystic Panda',
+  'Super Chango','Rocket Llama','Captain Gato','Zap Dino','Glow Worm'
+];
+const TYPES = ['Guerrero','Mago','Tanque','Asesino'];
+const ELEMS = ['Fuego','Agua','Rayo','Hielo','Naturaleza','Luz','Oscuridad','Viento'];
+const POWERS = [
+  'Golpe Explosivo','Tormenta Electrica','Llamarada Infernal','Escudo de Cristal',
+  'Tajo Huracan','Impacto Cosmico','Onda de Choque','Puno de Trueno',
+  'Rayo Laser','Bola de Fuego','Tornado Furioso','Explosion Solar'
+];
+
+function randomChar() {
+  return {
+    name: NAMES[Math.floor(Math.random()*NAMES.length)],
+    type: TYPES[Math.floor(Math.random()*TYPES.length)],
+    elem: ELEMS[Math.floor(Math.random()*ELEMS.length)],
+    power: POWERS[Math.floor(Math.random()*POWERS.length)],
+    atk: 8+Math.floor(Math.random()*12),
+    def: 3+Math.floor(Math.random()*8),
+    spd: 3+Math.floor(Math.random()*7),
+    hp: 80+Math.floor(Math.random()*70)
+  };
+}
+
+// ============ SCREENS ============
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function goMenu() { show('menu'); }
+
+// ============ ERROR ============
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(()=>{ el.style.display='none'; }, 3000);
+}
+
+// ============ CAMERA ============
+function openCamera() {
+  show('cam-screen');
+  const video = document.getElementById('video');
+  
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:720} },
+    audio: false
+  }).then(function(s) {
+    stream = s;
+    video.srcObject = s;
+    video.play().catch(function(){});
+  }).catch(function(err) {
+    console.error('Camera error:', err);
+    showError('No se pudo acceder a la camara');
+    show('menu');
+  });
+}
+
+function closeCamera() {
+  if (stream) {
+    stream.getTracks().forEach(function(t){ t.stop(); });
+    stream = null;
+  }
+  document.getElementById('video').srcObject = null;
+  show('menu');
+}
+
+// ============ CAPTURE & EXTRACT ============
+function captureDrawing() {
+  var video = document.getElementById('video');
+  if (!stream) { showError('La camara no esta lista'); return; }
+  
+  show('loading');
+  
+  // Stop camera
+  stream.getTracks().forEach(function(t){ t.stop(); });
+  stream = null;
+  video.srcObject = null;
+
+  // Capture frame to canvas
+  var c = document.createElement('canvas');
+  var SIZE = 512;
+  c.width = SIZE;
+  c.height = SIZE;
+  var ctx = c.getContext('2d');
+  
+  var vw = video.videoWidth || 640;
+  var vh = video.videoHeight || 480;
+  var crop = Math.min(vw, vh) * 0.7;
+  var sx = (vw - crop) / 2;
+  var sy = (vh - crop) / 2;
+  ctx.drawImage(video, sx, sy, crop, crop, 0, 0, SIZE, SIZE);
+
+  // Extract drawing (remove background)
+  var imgData = ctx.getImageData(0, 0, SIZE, SIZE);
+  var d = imgData.data;
+  
+  // Find background color from border
+  var bgR=0,bgG=0,bgB=0,cnt=0;
+  var bw=6;
+  for(var y=0;y<SIZE;y++){
+    for(var x=0;x<SIZE;x++){
+      if(x<bw||x>=SIZE-bw||y<bw||y>=SIZE-bw){
+        var i=(y*SIZE+x)*4;
+        bgR+=d[i]; bgG+=d[i+1]; bgB+=d[i+2]; cnt++;
+      }
+    }
+  }
+  bgR=Math.round(bgR/cnt); bgG=Math.round(bgG/cnt); bgB=Math.round(bgB/cnt);
+  
+  // Remove background pixels
+  var minX=SIZE,minY=SIZE,maxX=0,maxY=0;
+  var found=false;
+  for(var i=0;i<d.length;i+=4){
+    var r=d[i],g=d[i+1],b=d[i+2];
+    var dist=Math.sqrt((r-bgR)*(r-bgR)+(g-bgG)*(g-bgG)+(b-bgB)*(b-bgB));
+    var sat=Math.max(r,g,b)-Math.min(r,g,b);
+    var bright=(r+g+b)/3;
+    
+    if(dist<50 && sat<40){ d[i+3]=0; }
+    else if(bright>240 && sat<25){ d[i+3]=0; }
+    
+    if(d[i+3]>10){
+      var px=(i/4)%SIZE, py=Math.floor((i/4)/SIZE);
+      if(px<minX)minX=px; if(px>maxX)maxX=px;
+      if(py<minY)minY=py; if(py>maxY)maxY=py;
+      found=true;
+    }
+  }
+  
+  ctx.putImageData(imgData,0,0);
+  
+  if(!found){
+    // Nothing detected, use raw capture
+    showCharacter(c, randomChar());
+    return;
+  }
+  
+  // Crop to drawing bounds
+  var pad=10;
+  minX=Math.max(0,minX-pad); minY=Math.max(0,minY-pad);
+  maxX=Math.min(SIZE-1,maxX+pad); maxY=Math.min(SIZE-1,maxY+pad);
+  var cw=maxX-minX+1, ch=maxY-minY+1;
+  
+  if(cw<15||ch<15){ showCharacter(c, randomChar()); return; }
+  
+  var c2=document.createElement('canvas');
+  c2.width=cw; c2.height=ch;
+  c2.getContext('2d').drawImage(c,minX,minY,cw,ch,0,0,cw,ch);
+  
+  showCharacter(c2, randomChar());
+}
+
+// ============ DEMO MODE ============
+function demoMode() {
+  show('loading');
+  document.getElementById('load-text').textContent = 'Generando personaje...';
+  
+  // Generate a demo drawing on canvas
+  var c = document.createElement('canvas');
+  c.width = 200; c.height = 200;
+  var ctx = c.getContext('2d');
+  
+  // Random cute monster drawing
+  var colors = ['#ff6b6b','#fbbf24','#34d399','#60a5fa','#c084fc','#f472b6'];
+  var col1 = colors[Math.floor(Math.random()*colors.length)];
+  var col2 = colors[Math.floor(Math.random()*colors.length)];
+  
+  // Body
+  ctx.fillStyle = col1;
+  ctx.beginPath();
+  ctx.ellipse(100, 110, 50, 60, 0, 0, Math.PI*2);
+  ctx.fill();
+  
+  // Eyes
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(80, 90, 14, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(120, 90, 14, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.arc(83, 90, 7, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(123, 90, 7, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(86, 87, 3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(126, 87, 3, 0, Math.PI*2); ctx.fill();
+  
+  // Mouth
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(100, 115, 15, 0.2, Math.PI-0.2);
+  ctx.stroke();
+  
+  // Arms
+  ctx.strokeStyle = col1;
+  ctx.lineWidth = 8;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(50, 120); ctx.lineTo(25, 140); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(150, 120); ctx.lineTo(175, 140); ctx.stroke();
+  
+  // Feet
+  ctx.beginPath(); ctx.moveTo(75, 165); ctx.lineTo(70, 190); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(125, 165); ctx.lineTo(130, 190); ctx.stroke();
+  
+  // Horns or ears
+  ctx.fillStyle = col2;
+  ctx.beginPath(); ctx.moveTo(75, 55); ctx.lineTo(65, 30); ctx.lineTo(85, 55); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(115, 55); ctx.lineTo(135, 30); ctx.lineTo(125, 55); ctx.fill();
+  
+  // Cheeks
+  ctx.fillStyle = 'rgba(255,100,100,0.3)';
+  ctx.beginPath(); ctx.arc(60, 110, 10, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(140, 110, 10, 0, Math.PI*2); ctx.fill();
+  
+  setTimeout(function() { showCharacter(c, randomChar()); }, 500);
+}
+
+// ============ SHOW CHARACTER ============
+function showCharacter(drawingCanvas, char) {
+  characterData = char;
+  
+  // Draw avatar with glow
+  var ac = document.getElementById('avatar-canvas');
+  var actx = ac.getContext('2d');
+  ac.width = 180; ac.height = 180;
+  
+  // Glow background
+  var grad = actx.createRadialGradient(90,90,20,90,90,90);
+  grad.addColorStop(0, 'rgba(59,130,246,0.3)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  actx.fillStyle = grad;
+  actx.fillRect(0,0,180,180);
+  
+  // Fit drawing in avatar
+  var dw = drawingCanvas.width;
+  var dh = drawingCanvas.height;
+  var scale = Math.min(150/dw, 150/dh);
+  var fw = dw * scale;
+  var fh = dh * scale;
+  var fx = (180 - fw) / 2;
+  var fy = (180 - fh) / 2;
+  
+  // Glow on drawing
+  actx.shadowColor = '#60a5fa';
+  actx.shadowBlur = 15;
+  actx.drawImage(drawingCanvas, fx, fy, fw, fh);
+  actx.shadowBlur = 0;
+  
+  // Update UI
+  document.getElementById('char-name').textContent = char.name;
+  document.getElementById('char-type').textContent = char.type;
+  document.getElementById('s-atk').textContent = char.atk;
+  document.getElementById('s-def').textContent = char.def;
+  document.getElementById('s-spd').textContent = char.spd;
+  document.getElementById('s-hp').textContent = char.hp;
+  document.getElementById('char-power').textContent = char.power;
+  document.getElementById('char-elem').textContent = 'Elemento: ' + char.elem;
+  
+  show('char-screen');
+}
+
+// ============ INIT ============
+document.addEventListener('DOMContentLoaded', function() {
+  show('menu');
+});
+</script>
+</body>
+</html>
